@@ -18,13 +18,13 @@ class ApplicationData(BaseModel):
 
 
 class ExtractedLabel(BaseModel):
-    brand_name: str
-    product_class: str
-    producer: str
-    country: str
-    abv: str
-    net_contents: str
-    government_warning: str
+    brand_name: str | None = None
+    product_class: str | None = None
+    producer: str | None = None
+    country: str | None = None
+    abv: str | None = None
+    net_contents: str | None = None
+    government_warning: str | None = None
 
 
 class FieldResult(BaseModel):

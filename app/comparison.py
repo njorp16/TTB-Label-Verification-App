@@ -48,22 +48,22 @@ def verify_label(application: ApplicationData, extracted: ExtractedLabel) -> Ver
     return VerificationResult(verdict=verdict, fields=fields)
 
 
-def compare_brand_name(expected: str, actual: str) -> FieldResult:
+def compare_brand_name(expected: str, actual: str | None) -> FieldResult:
     return _compare_fuzzy("brand_name", expected, actual)
 
 
-def compare_product_class(expected: str, actual: str) -> FieldResult:
+def compare_product_class(expected: str, actual: str | None) -> FieldResult:
     return _compare_fuzzy("product_class", expected, actual)
 
 
-def compare_producer(expected: str, actual: str) -> FieldResult:
+def compare_producer(expected: str, actual: str | None) -> FieldResult:
     return _compare_fuzzy("producer", expected, actual)
 
 
-def compare_country(expected: str, actual: str) -> FieldResult:
+def compare_country(expected: str, actual: str | None) -> FieldResult:
     missing = _missing_reason(expected, actual)
     if missing:
-        return _fail("country", expected, actual, missing)
+        return _fail("country", expected, _display_value(actual), missing)
 
     normalized_expected = _normalize_country(expected)
     normalized_actual = _normalize_country(actual)
@@ -84,10 +84,10 @@ def compare_country(expected: str, actual: str) -> FieldResult:
     )
 
 
-def compare_abv(expected: str, actual: str) -> FieldResult:
+def compare_abv(expected: str, actual: str | None) -> FieldResult:
     missing = _missing_reason(expected, actual)
     if missing:
-        return _fail("abv", expected, actual, missing)
+        return _fail("abv", expected, _display_value(actual), missing)
 
     expected_value = _parse_abv(expected)
     actual_value = _parse_abv(actual)
@@ -114,10 +114,10 @@ def compare_abv(expected: str, actual: str) -> FieldResult:
     )
 
 
-def compare_net_contents(expected: str, actual: str) -> FieldResult:
+def compare_net_contents(expected: str, actual: str | None) -> FieldResult:
     missing = _missing_reason(expected, actual)
     if missing:
-        return _fail("net_contents", expected, actual, missing)
+        return _fail("net_contents", expected, _display_value(actual), missing)
 
     expected_ml = _parse_net_contents_ml(expected)
     actual_ml = _parse_net_contents_ml(actual)
@@ -144,10 +144,10 @@ def compare_net_contents(expected: str, actual: str) -> FieldResult:
     )
 
 
-def compare_government_warning(expected: str, actual: str) -> FieldResult:
+def compare_government_warning(expected: str, actual: str | None) -> FieldResult:
     missing = _missing_reason(expected, actual)
     if missing:
-        return _fail("government_warning", expected, actual, missing)
+        return _fail("government_warning", expected, _display_value(actual), missing)
 
     if expected == actual:
         return FieldResult(
@@ -166,10 +166,10 @@ def compare_government_warning(expected: str, actual: str) -> FieldResult:
     )
 
 
-def _compare_fuzzy(field_name: str, expected: str, actual: str) -> FieldResult:
+def _compare_fuzzy(field_name: str, expected: str, actual: str | None) -> FieldResult:
     missing = _missing_reason(expected, actual)
     if missing:
-        return _fail(field_name, expected, actual, missing)
+        return _fail(field_name, expected, _display_value(actual), missing)
 
     normalized_expected = _normalize_text(expected)
     normalized_actual = _normalize_text(actual)
@@ -227,12 +227,16 @@ def _parse_net_contents_ml(value: str) -> float | None:
     return amount
 
 
-def _missing_reason(expected: str, actual: str) -> str | None:
+def _missing_reason(expected: str, actual: str | None) -> str | None:
     if not expected.strip():
         return "Expected value is missing or blank."
-    if not actual.strip():
+    if actual is None or not actual.strip():
         return "Extracted value is missing or blank."
     return None
+
+
+def _display_value(value: str | None) -> str:
+    return "" if value is None else value
 
 
 def _fail(

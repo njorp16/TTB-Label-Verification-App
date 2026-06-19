@@ -225,3 +225,31 @@ def test_blank_extracted_fields_fail_with_clear_reason(field_name: str, comparis
     assert result.field_name == field_name
     assert result.status == "FAIL"
     assert result.reason == "Extracted value is missing or blank."
+
+
+@pytest.mark.parametrize(
+    ("field_name", "comparison"),
+    [
+        ("brand_name", compare_brand_name),
+        ("product_class", compare_product_class),
+        ("producer", compare_producer),
+        ("country", compare_country),
+        ("abv", compare_abv),
+        ("net_contents", compare_net_contents),
+        ("government_warning", compare_government_warning),
+    ],
+)
+def test_none_extracted_fields_fail_with_clear_reason(field_name: str, comparison) -> None:
+    result = comparison("Expected value", None)
+
+    assert result.field_name == field_name
+    assert result.status == "FAIL"
+    assert result.actual == ""
+    assert result.reason == "Extracted value is missing or blank."
+
+
+def test_verify_label_treats_null_extracted_fields_as_needing_review() -> None:
+    result = verify_label(_application(), ExtractedLabel())
+
+    assert result.verdict == "NEEDS_REVIEW"
+    assert [field.status for field in result.fields] == ["FAIL"] * 7

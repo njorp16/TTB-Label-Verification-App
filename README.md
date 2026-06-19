@@ -35,6 +35,20 @@ The page should show the `/health` response from the backend.
 uv run pytest
 ```
 
+## Vision Sample
+
+Set `OPENAI_API_KEY` in your local `.env`, then run one image through the VisionService:
+
+```bash
+uv run python scripts/run_vision_sample.py path/to/sample-label.jpg
+```
+
+If no path is provided, the script generates a simple sample label image in memory and prints the extracted JSON:
+
+```bash
+uv run python scripts/run_vision_sample.py
+```
+
 ## Deployment: Railway
 
 The checked-in `railway.toml` sets the start command and `/health` healthcheck path.
