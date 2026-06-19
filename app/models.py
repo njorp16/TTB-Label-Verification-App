@@ -39,3 +39,4 @@ class FieldResult(BaseModel):
 class VerificationResult(BaseModel):
     verdict: VerificationVerdict
     fields: list[FieldResult]
+    latency_ms: int | None = None
