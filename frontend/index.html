@@ -3,19 +3,129 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>TTB Label Verification</title>
+    <title>Check a Label | TTB Label Verification</title>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
     <main class="page">
-      <section class="panel" aria-labelledby="page-title">
-        <p class="eyebrow">Phase 0</p>
-        <h1 id="page-title">TTB Label Verification</h1>
-        <p class="lede">Backend connection check</p>
+      <section id="form-view" class="panel" aria-labelledby="page-title">
+        <header class="page-header">
+          <p class="eyebrow">TTB Label Verification</p>
+          <h1 id="page-title" tabindex="-1">Check a Label</h1>
+          <p class="lede">Add a label photo and enter the application information.</p>
+        </header>
 
-        <div id="health-status" class="status" role="status" aria-live="polite">
-          Checking the app connection...
+        <div id="error-summary" class="alert alert-error" role="alert" tabindex="-1" hidden></div>
+        <div id="loading-status" class="sr-only" role="status" aria-live="polite"></div>
+
+        <form id="verification-form" novalidate>
+          <fieldset id="verification-fields">
+            <legend class="sr-only">Label and application information</legend>
+
+            <section class="form-section" aria-labelledby="photo-heading">
+              <div class="section-heading">
+                <span class="step-number" aria-hidden="true">1</span>
+                <h2 id="photo-heading">Add the label photo</h2>
+              </div>
+
+              <div class="file-control">
+                <label class="file-button" for="image">Choose Label Photo</label>
+                <input
+                  id="image"
+                  name="image"
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  aria-describedby="image-help image-error"
+                  required
+                />
+                <p id="image-help" class="help-text">JPEG, PNG, or WEBP. Maximum size: 10 MB.</p>
+                <p id="image-error" class="field-error" aria-live="polite"></p>
+                <p id="selected-file" class="selected-file" aria-live="polite">No photo selected.</p>
+                <img id="image-preview" class="image-preview" alt="Preview of selected label photo" hidden />
+              </div>
+            </section>
+
+            <section class="form-section" aria-labelledby="information-heading">
+              <div class="section-heading">
+                <span class="step-number" aria-hidden="true">2</span>
+                <h2 id="information-heading">Enter the application information</h2>
+              </div>
+
+              <div class="form-grid">
+                <div class="field-group">
+                  <label for="brand_name">Brand Name</label>
+                  <input id="brand_name" name="brand_name" type="text" autocomplete="off" aria-describedby="brand_name-error" required />
+                  <p id="brand_name-error" class="field-error" aria-live="polite"></p>
+                </div>
+
+                <div class="field-group">
+                  <label for="product_class">Type of Product</label>
+                  <p class="help-text" id="product_class-help">For example: Red Wine</p>
+                  <input id="product_class" name="product_class" type="text" autocomplete="off" aria-describedby="product_class-help product_class-error" required />
+                  <p id="product_class-error" class="field-error" aria-live="polite"></p>
+                </div>
+
+                <div class="field-group">
+                  <label for="producer">Producer or Bottler Name</label>
+                  <input id="producer" name="producer" type="text" autocomplete="organization" aria-describedby="producer-error" required />
+                  <p id="producer-error" class="field-error" aria-live="polite"></p>
+                </div>
+
+                <div class="field-group">
+                  <label for="country">Country of Origin</label>
+                  <input id="country" name="country" type="text" autocomplete="country-name" aria-describedby="country-error" required />
+                  <p id="country-error" class="field-error" aria-live="polite"></p>
+                </div>
+
+                <div class="field-group">
+                  <label for="abv">Alcohol Percentage (ABV)</label>
+                  <p class="help-text" id="abv-help">For example: 13.5%</p>
+                  <input id="abv" name="abv" type="text" inputmode="decimal" autocomplete="off" aria-describedby="abv-help abv-error" required />
+                  <p id="abv-error" class="field-error" aria-live="polite"></p>
+                </div>
+
+                <div class="field-group">
+                  <label for="net_contents">Container Size (Net Contents)</label>
+                  <p class="help-text" id="net_contents-help">For example: 750 mL</p>
+                  <input id="net_contents" name="net_contents" type="text" autocomplete="off" aria-describedby="net_contents-help net_contents-error" required />
+                  <p id="net_contents-error" class="field-error" aria-live="polite"></p>
+                </div>
+
+                <div class="field-group field-group-wide">
+                  <label for="government_warning">Government Health Warning</label>
+                  <p class="help-text" id="government_warning-help">Capital letters, punctuation, and spaces must match the label exactly.</p>
+                  <textarea id="government_warning" name="government_warning" rows="7" aria-describedby="government_warning-help government_warning-error" required></textarea>
+                  <p id="government_warning-error" class="field-error" aria-live="polite"></p>
+                </div>
+              </div>
+            </section>
+
+            <button id="submit-button" class="primary-button" type="submit">
+              <span class="button-label">Check This Label</span>
+              <span class="spinner" aria-hidden="true" hidden></span>
+            </button>
+          </fieldset>
+        </form>
+      </section>
+
+      <section id="results-view" class="panel results-panel" aria-labelledby="result-verdict" hidden>
+        <div id="verdict-banner" class="verdict-banner">
+          <p class="eyebrow">Verification Result</p>
+          <h1 id="result-verdict" tabindex="-1"></h1>
+          <p id="result-summary" class="verdict-summary"></p>
         </div>
+
+        <section id="failed-section" class="result-section" aria-labelledby="failed-heading" hidden>
+          <h2 id="failed-heading">Items to Check</h2>
+          <div id="failed-results" class="result-list"></div>
+        </section>
+
+        <section id="passed-section" class="result-section" aria-labelledby="passed-heading">
+          <h2 id="passed-heading">Items That Match</h2>
+          <div id="passed-results" class="result-list"></div>
+        </section>
+
+        <button id="reset-button" class="primary-button" type="button">Check Another Label</button>
       </section>
     </main>
 
