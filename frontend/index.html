@@ -20,7 +20,7 @@
           <button id="batch-mode-button" class="mode-button" type="button" aria-pressed="false">Batch of Labels</button>
         </nav>
 
-        <div id="error-summary" class="alert alert-error" role="alert" tabindex="-1" hidden></div>
+        <div id="error-summary" class="alert alert-error" role="alert" aria-atomic="true" tabindex="-1" hidden></div>
         <div id="loading-status" class="sr-only" role="status" aria-live="polite"></div>
 
         <section id="batch-progress" class="progress-panel" role="status" aria-live="polite" hidden>
@@ -67,47 +67,47 @@
               <div class="form-grid">
                 <div class="field-group">
                   <label for="brand_name">Brand Name</label>
-                  <input id="brand_name" name="brand_name" type="text" autocomplete="off" aria-describedby="brand_name-error" required />
+                  <input id="brand_name" name="brand_name" type="text" maxlength="200" autocomplete="off" aria-describedby="brand_name-error" required />
                   <p id="brand_name-error" class="field-error" aria-live="polite"></p>
                 </div>
 
                 <div class="field-group">
                   <label for="product_class">Type of Product</label>
                   <p class="help-text" id="product_class-help">For example: Red Wine</p>
-                  <input id="product_class" name="product_class" type="text" autocomplete="off" aria-describedby="product_class-help product_class-error" required />
+                  <input id="product_class" name="product_class" type="text" maxlength="200" autocomplete="off" aria-describedby="product_class-help product_class-error" required />
                   <p id="product_class-error" class="field-error" aria-live="polite"></p>
                 </div>
 
                 <div class="field-group">
                   <label for="producer">Producer or Bottler Name</label>
-                  <input id="producer" name="producer" type="text" autocomplete="organization" aria-describedby="producer-error" required />
+                  <input id="producer" name="producer" type="text" maxlength="300" autocomplete="organization" aria-describedby="producer-error" required />
                   <p id="producer-error" class="field-error" aria-live="polite"></p>
                 </div>
 
                 <div class="field-group">
                   <label for="country">Country of Origin</label>
-                  <input id="country" name="country" type="text" autocomplete="country-name" aria-describedby="country-error" required />
+                  <input id="country" name="country" type="text" maxlength="100" autocomplete="country-name" aria-describedby="country-error" required />
                   <p id="country-error" class="field-error" aria-live="polite"></p>
                 </div>
 
                 <div class="field-group">
                   <label for="abv">Alcohol Percentage (ABV)</label>
                   <p class="help-text" id="abv-help">For example: 13.5%</p>
-                  <input id="abv" name="abv" type="text" inputmode="decimal" autocomplete="off" aria-describedby="abv-help abv-error" required />
+                  <input id="abv" name="abv" type="text" maxlength="50" inputmode="decimal" autocomplete="off" aria-describedby="abv-help abv-error" required />
                   <p id="abv-error" class="field-error" aria-live="polite"></p>
                 </div>
 
                 <div class="field-group">
                   <label for="net_contents">Container Size (Net Contents)</label>
                   <p class="help-text" id="net_contents-help">For example: 750 mL</p>
-                  <input id="net_contents" name="net_contents" type="text" autocomplete="off" aria-describedby="net_contents-help net_contents-error" required />
+                  <input id="net_contents" name="net_contents" type="text" maxlength="50" autocomplete="off" aria-describedby="net_contents-help net_contents-error" required />
                   <p id="net_contents-error" class="field-error" aria-live="polite"></p>
                 </div>
 
                 <div class="field-group field-group-wide">
                   <label for="government_warning">Government Health Warning</label>
                   <p class="help-text" id="government_warning-help">Capital letters, punctuation, and spaces must match the label exactly.</p>
-                  <textarea id="government_warning" name="government_warning" rows="7" aria-describedby="government_warning-help government_warning-error" required></textarea>
+                  <textarea id="government_warning" name="government_warning" rows="7" maxlength="4000" aria-describedby="government_warning-help government_warning-error" required></textarea>
                   <p id="government_warning-error" class="field-error" aria-live="polite"></p>
                 </div>
               </div>
@@ -183,13 +183,13 @@
             <p class="field-error" data-error-for="image" aria-live="polite"></p>
             <p class="selected-file" data-selected-file>No photo selected.</p>
           </div>
-          <div class="field-group"><label data-for="brand_name">Brand Name</label><input data-name="brand_name" type="text" autocomplete="off" required /><p class="field-error" data-error-for="brand_name"></p></div>
-          <div class="field-group"><label data-for="product_class">Type of Product</label><input data-name="product_class" type="text" autocomplete="off" required /><p class="field-error" data-error-for="product_class"></p></div>
-          <div class="field-group"><label data-for="producer">Producer or Bottler Name</label><input data-name="producer" type="text" autocomplete="organization" required /><p class="field-error" data-error-for="producer"></p></div>
-          <div class="field-group"><label data-for="country">Country of Origin</label><input data-name="country" type="text" autocomplete="country-name" required /><p class="field-error" data-error-for="country"></p></div>
-          <div class="field-group"><label data-for="abv">Alcohol Percentage (ABV)</label><input data-name="abv" type="text" inputmode="decimal" placeholder="For example: 13.5%" required /><p class="field-error" data-error-for="abv"></p></div>
-          <div class="field-group"><label data-for="net_contents">Container Size (Net Contents)</label><input data-name="net_contents" type="text" placeholder="For example: 750 mL" required /><p class="field-error" data-error-for="net_contents"></p></div>
-          <div class="field-group field-group-wide"><label data-for="government_warning">Government Health Warning</label><p class="help-text">Capital letters, punctuation, and spaces must match exactly.</p><textarea data-name="government_warning" rows="6" required></textarea><p class="field-error" data-error-for="government_warning"></p></div>
+          <div class="field-group"><label data-for="brand_name">Brand Name</label><input data-name="brand_name" type="text" maxlength="200" autocomplete="off" required /><p class="field-error" data-error-for="brand_name" aria-live="polite"></p></div>
+          <div class="field-group"><label data-for="product_class">Type of Product</label><input data-name="product_class" type="text" maxlength="200" autocomplete="off" required /><p class="field-error" data-error-for="product_class" aria-live="polite"></p></div>
+          <div class="field-group"><label data-for="producer">Producer or Bottler Name</label><input data-name="producer" type="text" maxlength="300" autocomplete="organization" required /><p class="field-error" data-error-for="producer" aria-live="polite"></p></div>
+          <div class="field-group"><label data-for="country">Country of Origin</label><input data-name="country" type="text" maxlength="100" autocomplete="country-name" required /><p class="field-error" data-error-for="country" aria-live="polite"></p></div>
+          <div class="field-group"><label data-for="abv">Alcohol Percentage (ABV)</label><input data-name="abv" type="text" maxlength="50" inputmode="decimal" placeholder="For example: 13.5%" required /><p class="field-error" data-error-for="abv" aria-live="polite"></p></div>
+          <div class="field-group"><label data-for="net_contents">Container Size (Net Contents)</label><input data-name="net_contents" type="text" maxlength="50" placeholder="For example: 750 mL" required /><p class="field-error" data-error-for="net_contents" aria-live="polite"></p></div>
+          <div class="field-group field-group-wide"><label data-for="government_warning">Government Health Warning</label><p class="help-text">Capital letters, punctuation, and spaces must match exactly.</p><textarea data-name="government_warning" rows="6" maxlength="4000" required></textarea><p class="field-error" data-error-for="government_warning" aria-live="polite"></p></div>
         </div>
       </article>
     </template>

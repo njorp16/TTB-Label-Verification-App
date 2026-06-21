@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from PIL import Image
 
+import app.vision as vision_module
 from app.models import ExtractedLabel
 from app.vision import (
     DEFAULT_VISION_MODEL,
@@ -84,7 +85,7 @@ def test_preprocess_downscales_large_image_and_outputs_rgb_jpeg() -> None:
         assert image.format == "JPEG"
         assert image.mode == "RGB"
         assert max(image.size) == MAX_IMAGE_SIDE
-        assert image.size == (1600, 900)
+        assert image.size == (1024, 576)
 
 
 def test_preprocess_does_not_upscale_small_image() -> None:
@@ -97,6 +98,25 @@ def test_preprocess_does_not_upscale_small_image() -> None:
 def test_preprocess_rejects_invalid_image_bytes() -> None:
     with pytest.raises(VisionInputError, match="valid image"):
         preprocess_image_for_vision(b"not an image")
+
+
+def test_preprocess_rejects_excessive_pixel_dimensions(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(vision_module, "MAX_IMAGE_PIXELS", 100)
+
+    with pytest.raises(VisionInputError, match="50 megapixels"):
+        preprocess_image_for_vision(_image_bytes((11, 10)))
+
+
+def test_preprocess_uses_safe_defaults_for_invalid_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VISION_MAX_IMAGE_SIDE", "not-an-integer")
+    monkeypatch.setenv("VISION_JPEG_QUALITY", "500")
+
+    processed = preprocess_image_for_vision(_image_bytes((1600, 900)))
+
+    with _decoded_image(processed) as image:
+        assert image.size == (1024, 576)
 
 
 def test_structured_request_uses_model_image_input_schema_and_prompt() -> None:
@@ -116,6 +136,7 @@ def test_structured_request_uses_model_image_input_schema_and_prompt() -> None:
     call = client.responses.calls[0]
     assert call["model"] == DEFAULT_VISION_MODEL
     assert call["timeout"] == 4.0
+    assert call["max_output_tokens"] == 600
 
     content = call["input"][0]["content"]
     assert content[0] == {"type": "input_text", "text": EXTRACTION_PROMPT}
@@ -132,7 +153,7 @@ def test_structured_request_uses_model_image_input_schema_and_prompt() -> None:
     assert schema_format["schema"]["properties"]["government_warning"]["type"] == ["string", "null"]
     assert "Use null" in EXTRACTION_PROMPT
     assert "copy the warning verbatim" in EXTRACTION_PROMPT
-    assert "blurry, angled, partially cropped, or has glare" in EXTRACTION_PROMPT
+    assert "blurry, angled, cropped, or glare-obscured" in EXTRACTION_PROMPT
 
 
 def test_extract_label_preserves_partial_null_data() -> None:
@@ -180,6 +201,16 @@ def test_extract_label_raises_for_timeout() -> None:
 
     with pytest.raises(VisionServiceError, match="did not respond"):
         asyncio.run(service.extract_label(_image_bytes((640, 480)), "image/png"))
+
+
+def test_legacy_model_environment_upgrades_to_phase_6_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VISION_MODEL", "gpt-5.4-mini")
+
+    service = OpenAIVisionService(client=FakeOpenAIClient())
+
+    assert service.model == DEFAULT_VISION_MODEL
 
 
 def test_vision_service_can_be_mocked_with_protocol() -> None:

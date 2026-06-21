@@ -1,4 +1,15 @@
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const MAX_TEXT_LENGTHS = {
+  brand_name: 200,
+  product_class: 200,
+  producer: 300,
+  country: 100,
+  abv: 50,
+  net_contents: 50,
+  government_warning: 4000,
+};
+const UPLOAD_IMAGE_MAX_SIDE = 1024;
+const UPLOAD_JPEG_QUALITY = 0.8;
 const ACCEPTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 const FIELD_LABELS = {
@@ -67,9 +78,12 @@ form.addEventListener("submit", async (event) => {
   setLoading(true);
 
   try {
+    const body = new FormData(form);
+    const optimizedImage = await optimizeImageForUpload(imageInput.files[0]);
+    body.set("image", optimizedImage, optimizedFilename(imageInput.files[0].name));
     const response = await fetch("/verify", {
       method: "POST",
-      body: new FormData(form),
+      body,
     });
 
     const payload = await readJson(response);
@@ -134,15 +148,19 @@ batchForm.addEventListener("submit", async (event) => {
   const applications = cards.map((card) => {
     const application = {};
     Object.keys(FIELD_LABELS).forEach((name) => {
-      application[name] = card.querySelector(`[data-name="${name}"]`).value.trim();
+      application[name] = card.querySelector(`[data-name="${name}"]`).value;
     });
-    body.append("images", card.querySelector('[data-name="image"]').files[0]);
     return application;
   });
   body.append("applications", JSON.stringify(applications));
   setBatchLoading(true, cards.length);
 
   try {
+    const optimizedImages = await Promise.all(cards.map(async (card) => {
+      const file = card.querySelector('[data-name="image"]').files[0];
+      return [await optimizeImageForUpload(file), optimizedFilename(file.name)];
+    }));
+    optimizedImages.forEach(([file, name]) => body.append("images", file, name));
     const response = await fetch("/verify/batch", { method: "POST", body });
     const payload = await readJson(response);
     if (!response.ok) {
@@ -198,8 +216,12 @@ function validateForm() {
         `Enter the ${label}.`,
         firstInvalidControl,
       );
+    } else if (control.value.length > MAX_TEXT_LENGTHS[name]) {
+      firstInvalidControl = markInvalid(control, `${label} is too long.`, firstInvalidControl);
     }
   });
+
+  firstInvalidControl = validateApplicationFormats(form, firstInvalidControl);
 
   return firstInvalidControl;
 }
@@ -248,6 +270,48 @@ function updateImagePreview() {
   previewUrl = URL.createObjectURL(file);
   imagePreview.src = previewUrl;
   imagePreview.hidden = false;
+}
+
+function validateApplicationFormats(container, firstInvalidControl) {
+  const abv = container.querySelector('[name="abv"], [data-name="abv"]');
+  const netContents = container.querySelector('[name="net_contents"], [data-name="net_contents"]');
+  const abvMatch = abv.value.match(/\d+(?:\.\d+)?/);
+  if (abv.value.trim() && (!abvMatch || Number(abvMatch[0]) <= 0 || Number(abvMatch[0]) > 100)) {
+    firstInvalidControl = container === form
+      ? markInvalid(abv, "Enter an alcohol percentage between 0 and 100, such as 13.5%.", firstInvalidControl)
+      : markBatchInvalid(abv, "Enter an alcohol percentage between 0 and 100, such as 13.5%.", firstInvalidControl);
+  }
+  const netMatch = netContents.value.match(/^\s*(\d+(?:\.\d+)?)\s*(?:ml|milliliters?|millilitres?|l|liters?|litres?)\s*$/i);
+  if (netContents.value.trim() && (!netMatch || Number(netMatch[1]) <= 0)) {
+    firstInvalidControl = container === form
+      ? markInvalid(netContents, "Enter a positive container size in mL or L, such as 750 mL.", firstInvalidControl)
+      : markBatchInvalid(netContents, "Enter a positive container size in mL or L, such as 750 mL.", firstInvalidControl);
+  }
+  return firstInvalidControl;
+}
+
+async function optimizeImageForUpload(file) {
+  if (!("createImageBitmap" in window)) return file;
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+    const scale = Math.min(1, UPLOAD_IMAGE_MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+    if (scale === 1 && file.size <= 1024 * 1024) return file;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", UPLOAD_JPEG_QUALITY));
+    return blob || file;
+  } catch {
+    return file;
+  } finally {
+    bitmap?.close();
+  }
+}
+
+function optimizedFilename(filename) {
+  return filename.replace(/\.[^.]+$/, "") + ".jpg";
 }
 
 function releasePreviewUrl() {
@@ -428,8 +492,12 @@ function addBatchItem(focusCard = false) {
     error.id = `batch-${itemId}-${error.dataset.errorFor}-error`;
   });
   card.querySelector(".remove-batch-item").addEventListener("click", () => {
+    const nextFocus = card.nextElementSibling?.querySelector('[data-name="image"]')
+      || card.previousElementSibling?.querySelector('[data-name="image"]')
+      || addBatchItemButton;
     card.remove();
     renumberBatchCards();
+    nextFocus.focus();
   });
   batchItems.append(card);
   renumberBatchCards();
@@ -439,8 +507,14 @@ function addBatchItem(focusCard = false) {
 function renumberBatchCards() {
   const cards = [...batchItems.querySelectorAll(".batch-card")];
   cards.forEach((card, index) => {
-    card.querySelector(".batch-card-title").textContent = `Label ${index + 1}`;
-    card.querySelector(".remove-batch-item").hidden = cards.length === 1;
+    const number = index + 1;
+    const title = card.querySelector(".batch-card-title");
+    title.textContent = `Label ${number}`;
+    title.id = `batch-${card.dataset.itemId}-title`;
+    card.setAttribute("aria-labelledby", title.id);
+    const removeButton = card.querySelector(".remove-batch-item");
+    removeButton.hidden = cards.length === 1;
+    removeButton.setAttribute("aria-label", `Remove Label ${number}`);
   });
   addBatchItemButton.disabled = cards.length >= 10;
   addBatchItemButton.textContent = cards.length >= 10
@@ -464,8 +538,11 @@ function validateBatch(cards) {
       const control = card.querySelector(`[data-name="${name}"]`);
       if (!control.value.trim()) {
         firstInvalid = markBatchInvalid(control, `Enter the ${label}.`, firstInvalid);
+      } else if (control.value.length > MAX_TEXT_LENGTHS[name]) {
+        firstInvalid = markBatchInvalid(control, `${label} is too long.`, firstInvalid);
       }
     });
+    firstInvalid = validateApplicationFormats(card, firstInvalid);
   });
   return firstInvalid;
 }

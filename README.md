@@ -1,6 +1,6 @@
 # TTB Label Verification App
 
-Phase 0 creates a minimal deployable foundation: a FastAPI backend, a simple static frontend, and a `/health` endpoint.
+A hardened proof of concept for checking single alcohol labels or batches against application data.
 
 ## Requirements
 
@@ -34,6 +34,13 @@ The page should show the `/health` response from the backend.
 ```bash
 uv run pytest
 ```
+
+The unit suite is offline and must not call the live vision service. Production verification uses
+the model, timeout, image-size, JPEG-quality, detail, and batch-concurrency environment variables
+listed in `.env.example`. Keep `OPENAI_API_KEY` in the environment only.
+
+The `/verify` response includes total server `latency_ms`. Server logs also record upload-read,
+preprocessing, model, and comparison timings without recording label text, filenames, or images.
 
 ## Vision Sample
 

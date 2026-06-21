@@ -5,6 +5,7 @@ import asyncio
 import io
 import mimetypes
 import sys
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -37,16 +38,30 @@ def main() -> None:
         type=Path,
         help="Optional path to a sample label image. If omitted, a synthetic sample label is generated.",
     )
+    parser.add_argument("--runs", type=int, default=1, help="Number of requests using one reused client.")
     args = parser.parse_args()
 
     load_dotenv()
 
     image_bytes, content_type = _load_image(args.image_path)
     processed_image = preprocess_image_for_vision(image_bytes)
-    result = asyncio.run(
-        OpenAIVisionService().extract_label(processed_image, "image/jpeg")
-    )
-    print(result.model_dump_json(indent=2))
+    results, latencies = asyncio.run(_run_samples(processed_image, max(1, args.runs)))
+    print(results[-1].model_dump_json(indent=2))
+    print(f"latency_ms={latencies}")
+
+
+async def _run_samples(image_bytes: bytes, runs: int):
+    service = OpenAIVisionService()
+    results = []
+    latencies = []
+    try:
+        for _ in range(runs):
+            started_at = time.perf_counter()
+            results.append(await service.extract_label(image_bytes, "image/jpeg"))
+            latencies.append(round((time.perf_counter() - started_at) * 1000))
+    finally:
+        await service._client.close()
+    return results, latencies
 
 
 def _load_image(image_path: Path | None) -> tuple[bytes, str]:

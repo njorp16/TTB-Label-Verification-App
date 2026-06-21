@@ -51,6 +51,8 @@ def test_frontend_contains_accessible_feedback_regions() -> None:
     assert 'id="result-verdict"' in response.text
     assert 'id="failed-results"' in response.text
     assert 'id="passed-results"' in response.text
+    assert 'aria-atomic="true"' in response.text
+    assert 'maxlength="4000"' in response.text
 
 
 def test_frontend_script_uses_existing_verify_contract() -> None:
@@ -88,3 +90,15 @@ def test_frontend_script_submits_batch_and_renders_summary_and_drill_down() -> N
     assert 'createSummaryCount("Needs Review"' in response.text
     assert 'document.createElement("details")' in response.text
     assert "batchProgressTimer" in response.text
+    assert "optimizeImageForUpload" in response.text
+    assert "Remove Label" in response.text
+
+
+def test_frontend_styles_meet_hardening_accessibility_targets() -> None:
+    response = client.get("/static/styles.css")
+
+    assert response.status_code == 200
+    assert "font-size: 20px" in response.text
+    assert "min-height: 56px" in response.text
+    assert "prefers-reduced-motion: reduce" in response.text
+    assert "animation: none" in response.text

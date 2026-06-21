@@ -128,7 +128,7 @@ def test_verify_rejects_missing_image_with_human_readable_message(client: TestCl
 
     assert response.status_code == 422
     assert response.json() == {
-        "message": "Please provide an image and all required application fields."
+        "message": "Choose a label image to continue."
     }
 
 
@@ -141,7 +141,7 @@ def test_verify_rejects_missing_required_field(client: TestClient) -> None:
 
     assert response.status_code == 422
     assert response.json() == {
-        "message": "Please provide an image and all required application fields."
+        "message": "Enter Brand Name."
     }
 
 
@@ -152,7 +152,7 @@ def test_verify_rejects_blank_required_field(client: TestClient) -> None:
     response = client.post("/verify", data=data, files=_image_file())
 
     assert response.status_code == 400
-    assert response.json() == {"message": "Please provide all required application fields."}
+    assert response.json() == {"message": "Enter Brand Name."}
 
 
 def test_verify_rejects_unsupported_content_type(client: TestClient) -> None:
@@ -205,6 +205,62 @@ def test_verify_rejects_invalid_image_bytes(client: TestClient) -> None:
 
     assert response.status_code == 400
     assert response.json() == {"message": "Uploaded file is not a valid image."}
+
+
+def test_verify_rejects_mime_type_that_does_not_match_image(client: TestClient) -> None:
+    _override_vision_service(FakeVisionService())
+    output = io.BytesIO()
+    Image.new("RGB", (32, 32), "white").save(output, format="JPEG")
+
+    response = client.post(
+        "/verify",
+        data=_form_data(),
+        files={"image": ("label.png", output.getvalue(), "image/png")},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"message": "The file type does not match the image contents."}
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value", "message"),
+    [
+        ("abv", "not a percentage", "Enter an alcohol percentage between 0 and 100, such as 13.5%."),
+        ("abv", "101%", "Enter an alcohol percentage between 0 and 100, such as 13.5%."),
+        ("net_contents", "one bottle", "Enter a positive container size in mL or L, such as 750 mL."),
+        ("net_contents", "0 ml", "Enter a positive container size in mL or L, such as 750 mL."),
+    ],
+)
+def test_verify_rejects_invalid_application_formats(
+    client: TestClient,
+    field_name: str,
+    value: str,
+    message: str,
+) -> None:
+    _override_vision_service(FakeVisionService())
+
+    response = client.post(
+        "/verify",
+        data=_form_data(**{field_name: value}),
+        files=_image_file(),
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"message": message}
+
+
+def test_imperfect_image_partial_extraction_degrades_to_needs_review(client: TestClient) -> None:
+    service = FakeVisionService(
+        ExtractedLabel(brand_name="Acme Reserve", government_warning=None)
+    )
+    _override_vision_service(service)
+
+    response = client.post("/verify", data=_form_data(), files=_image_file())
+
+    assert response.status_code == 200
+    assert response.json()["verdict"] == "NEEDS_REVIEW"
+    assert _field(response.json(), "brand_name")["status"] == "PASS"
+    assert _field(response.json(), "government_warning")["status"] == "FAIL"
 
 
 def test_verify_shapes_unexpected_vision_errors_without_internal_details(

@@ -8,7 +8,7 @@ import os
 from typing import Any, Protocol
 
 from openai import AsyncOpenAI
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import ValidationError
 
 from app.models import ExtractedLabel
@@ -16,10 +16,21 @@ from app.models import ExtractedLabel
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_VISION_MODEL = "gpt-5.4-mini"
+DEFAULT_VISION_MODEL = "gpt-4.1-mini"
+LEGACY_VISION_MODEL = "gpt-5.4-mini"
 DEFAULT_VISION_TIMEOUT_SECONDS = 4.0
-MAX_IMAGE_SIDE = 1600
-JPEG_QUALITY = 82
+DEFAULT_MAX_IMAGE_SIDE = 1024
+DEFAULT_JPEG_QUALITY = 80
+DEFAULT_IMAGE_DETAIL = "high"
+MAX_IMAGE_PIXELS = 50_000_000
+MAX_IMAGE_SIDE = DEFAULT_MAX_IMAGE_SIDE
+JPEG_QUALITY = DEFAULT_JPEG_QUALITY
+
+CONTENT_TYPE_BY_FORMAT = {
+    "JPEG": "image/jpeg",
+    "PNG": "image/png",
+    "WEBP": "image/webp",
+}
 
 EXTRACTED_LABEL_FIELDS = (
     "brand_name",
@@ -31,24 +42,10 @@ EXTRACTED_LABEL_FIELDS = (
     "government_warning",
 )
 
-EXTRACTION_PROMPT = """Extract visible text from this alcohol beverage label.
-
-Return exactly these seven fields:
-- brand_name
-- product_class
-- producer
-- country
-- abv
-- net_contents
-- government_warning
-
-Use null for any field that is unknown, unreadable, not visible, or ambiguous. Do not guess.
-For the government_warning field, copy the warning verbatim from the image, preserving case,
-punctuation, parentheses, spacing, and line-break-derived spaces as visible. Do not normalize the
-government warning. For all other fields, return the most likely visible value as plain text.
-If the image is blurry, angled, partially cropped, or has glare, return partial data for readable
-fields and null for the rest. Do not fail just because some fields are unreadable.
-"""
+EXTRACTION_PROMPT = """Read this alcohol label and return the seven schema fields. Use null when a
+field is absent, unreadable, or ambiguous; never guess. For government_warning, copy the warning verbatim, preserving
+case, punctuation, parentheses, and visible spacing. For blurry, angled, cropped, or glare-obscured
+images, return every readable field and null for the rest."""
 
 
 class VisionInputError(ValueError):
@@ -70,11 +67,18 @@ class OpenAIVisionService:
         client: Any | None = None,
         model: str | None = None,
         timeout_seconds: float | None = None,
+        image_detail: str | None = None,
     ) -> None:
-        self.model = model or os.getenv("VISION_MODEL", DEFAULT_VISION_MODEL)
-        self.timeout_seconds = timeout_seconds or float(
-            os.getenv("VISION_TIMEOUT_SECONDS", DEFAULT_VISION_TIMEOUT_SECONDS)
+        configured_model = os.getenv("VISION_MODEL")
+        if configured_model == LEGACY_VISION_MODEL:
+            logger.info("Upgrading legacy VISION_MODEL to the Phase 6 default.")
+            configured_model = DEFAULT_VISION_MODEL
+        self.model = model or configured_model or DEFAULT_VISION_MODEL
+        self.timeout_seconds = timeout_seconds or _env_float(
+            "VISION_TIMEOUT_SECONDS", DEFAULT_VISION_TIMEOUT_SECONDS, minimum=1.0, maximum=4.5
         )
+        configured_detail = image_detail or os.getenv("VISION_IMAGE_DETAIL", DEFAULT_IMAGE_DETAIL)
+        self.image_detail = configured_detail if configured_detail in {"low", "high", "auto"} else DEFAULT_IMAGE_DETAIL
         self._client = client or self._build_client()
 
     async def extract_label(self, image_bytes: bytes, content_type: str) -> ExtractedLabel:
@@ -84,6 +88,7 @@ class OpenAIVisionService:
             response = await self._client.responses.create(
                 model=self.model,
                 timeout=self.timeout_seconds,
+                max_output_tokens=600,
                 text={"format": _structured_output_format()},
                 input=[
                     {
@@ -93,7 +98,7 @@ class OpenAIVisionService:
                             {
                                 "type": "input_image",
                                 "image_url": image_data_url,
-                                "detail": "high",
+                                "detail": self.image_detail,
                             },
                         ],
                     }
@@ -118,21 +123,59 @@ class OpenAIVisionService:
     def _build_client() -> AsyncOpenAI:
         if not os.getenv("OPENAI_API_KEY"):
             raise RuntimeError("OPENAI_API_KEY is required to use OpenAIVisionService.")
-        return AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
+        return AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"], max_retries=0)
 
 
-def preprocess_image_for_vision(image_bytes: bytes) -> bytes:
+def preprocess_image_for_vision(
+    image_bytes: bytes,
+    expected_content_type: str | None = None,
+) -> bytes:
     try:
         with Image.open(io.BytesIO(image_bytes)) as image:
+            decoded_type = CONTENT_TYPE_BY_FORMAT.get(image.format or "")
+            if decoded_type is None:
+                raise VisionInputError("Upload must decode as a JPEG, PNG, or WEBP image.")
+            if expected_content_type is not None and decoded_type != expected_content_type:
+                raise VisionInputError("The file type does not match the image contents.")
+            if image.width * image.height > MAX_IMAGE_PIXELS:
+                raise VisionInputError("Uploaded image is too large. Use an image under 50 megapixels.")
             image.load()
-            image = image.convert("RGB")
-            image.thumbnail((MAX_IMAGE_SIDE, MAX_IMAGE_SIDE), Image.Resampling.LANCZOS)
+            image = ImageOps.exif_transpose(image).convert("RGB")
+            max_side = _env_int("VISION_MAX_IMAGE_SIDE", DEFAULT_MAX_IMAGE_SIDE, 640, 2000)
+            quality = _env_int("VISION_JPEG_QUALITY", DEFAULT_JPEG_QUALITY, 60, 95)
+            image.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
 
             output = io.BytesIO()
-            image.save(output, format="JPEG", quality=JPEG_QUALITY, optimize=True)
+            image.save(output, format="JPEG", quality=quality, optimize=True)
             return output.getvalue()
-    except (UnidentifiedImageError, OSError) as exc:
+    except VisionInputError:
+        raise
+    except (Image.DecompressionBombError, UnidentifiedImageError, OSError) as exc:
         raise VisionInputError("Uploaded file is not a valid image.") from exc
+
+
+def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        logger.warning("Invalid %s; using default %s.", name, default)
+        return default
+    if not minimum <= value <= maximum:
+        logger.warning("Out-of-range %s; using default %s.", name, default)
+        return default
+    return value
+
+
+def _env_float(name: str, default: float, minimum: float, maximum: float) -> float:
+    try:
+        value = float(os.getenv(name, str(default)))
+    except ValueError:
+        logger.warning("Invalid %s; using default %s.", name, default)
+        return default
+    if not minimum <= value <= maximum:
+        logger.warning("Out-of-range %s; using default %s.", name, default)
+        return default
+    return value
 
 
 def _structured_output_format() -> dict[str, Any]:

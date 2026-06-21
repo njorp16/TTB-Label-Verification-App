@@ -1,6 +1,7 @@
+import re
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 FieldStatus = Literal["PASS", "FAIL"]
@@ -9,13 +10,42 @@ BatchItemOutcome = Literal["PASS", "NEEDS_REVIEW", "ERROR"]
 
 
 class ApplicationData(BaseModel):
-    brand_name: str
-    product_class: str
-    producer: str
-    country: str
-    abv: str
-    net_contents: str
-    government_warning: str
+    model_config = ConfigDict(extra="forbid")
+
+    brand_name: str = Field(max_length=200)
+    product_class: str = Field(max_length=200)
+    producer: str = Field(max_length=300)
+    country: str = Field(max_length=100)
+    abv: str = Field(max_length=50)
+    net_contents: str = Field(max_length=50)
+    government_warning: str = Field(max_length=4000)
+
+    @field_validator("*")
+    @classmethod
+    def required_text_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be blank")
+        return value
+
+    @field_validator("abv")
+    @classmethod
+    def abv_must_be_valid(cls, value: str) -> str:
+        match = re.search(r"\d+(?:\.\d+)?", value)
+        if match is None or not 0 < float(match.group()) <= 100:
+            raise ValueError("must contain an alcohol percentage between 0 and 100")
+        return value
+
+    @field_validator("net_contents")
+    @classmethod
+    def net_contents_must_be_valid(cls, value: str) -> str:
+        match = re.fullmatch(
+            r"\s*(\d+(?:\.\d+)?)\s*(ml|milliliters?|millilitres?|l|liters?|litres?)\s*",
+            value,
+            re.IGNORECASE,
+        )
+        if match is None or float(match.group(1)) <= 0:
+            raise ValueError("must include a positive amount in mL or L")
+        return value
 
 
 class ExtractedLabel(BaseModel):

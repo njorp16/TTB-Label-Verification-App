@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import time
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -41,9 +42,20 @@ DEFAULT_BATCH_CONCURRENCY_LIMIT = 4
 
 logger = logging.getLogger(__name__)
 
+FIELD_LABELS = {
+    "brand_name": "Brand Name",
+    "product_class": "Type of Product",
+    "producer": "Producer or Bottler Name",
+    "country": "Country of Origin",
+    "abv": "Alcohol Percentage (ABV)",
+    "net_contents": "Container Size (Net Contents)",
+    "government_warning": "Government Health Warning",
+}
+
 app = FastAPI(title="TTB Label Verification")
 
 
+@lru_cache(maxsize=1)
 def get_vision_service() -> VisionService:
     return OpenAIVisionService()
 
@@ -51,11 +63,12 @@ def get_vision_service() -> VisionService:
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(
     _request: Request,
-    _exc: RequestValidationError,
+    exc: RequestValidationError,
 ) -> JSONResponse:
+    message = _request_validation_message(exc)
     return JSONResponse(
         status_code=422,
-        content={"message": "Please provide an image and all required application fields."},
+        content={"message": message},
     )
 
 
@@ -101,6 +114,8 @@ async def verify(
             government_warning=government_warning,
         )
         return await _verify_one(image, application, vision_service, started_at)
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail={"message": _application_error_message(exc)}) from exc
     except HTTPException:
         raise
     except VisionInputError as exc:
@@ -186,13 +201,33 @@ async def _verify_one(
     started_at = started_at if started_at is not None else time.perf_counter()
     _validate_application_fields(application.model_dump())
     _validate_upload_type(image)
+    read_started_at = time.perf_counter()
     image_bytes = await image.read()
+    read_ms = _elapsed_ms(read_started_at)
     _validate_upload_size(image_bytes)
-    processed_image = await asyncio.to_thread(preprocess_image_for_vision, image_bytes)
+    preprocess_started_at = time.perf_counter()
+    processed_image = await asyncio.to_thread(
+        preprocess_image_for_vision,
+        image_bytes,
+        image.content_type,
+    )
+    preprocess_ms = _elapsed_ms(preprocess_started_at)
+    model_started_at = time.perf_counter()
     extracted = await vision_service.extract_label(processed_image, "image/jpeg")
+    model_ms = _elapsed_ms(model_started_at)
+    comparison_started_at = time.perf_counter()
     result = verify_label(application, extracted)
+    comparison_ms = _elapsed_ms(comparison_started_at)
     result.latency_ms = _elapsed_ms(started_at)
-    _log_verification_latency(result)
+    _log_verification_latency(
+        result,
+        read_ms=read_ms,
+        preprocess_ms=preprocess_ms,
+        model_ms=model_ms,
+        comparison_ms=comparison_ms,
+        input_bytes=len(image_bytes),
+        processed_bytes=len(processed_image),
+    )
     return result
 
 
@@ -281,6 +316,8 @@ def _batch_input_error_message(exc: Exception) -> str:
             return detail["message"]
     if isinstance(exc, VisionInputError):
         return str(exc)
+    if isinstance(exc, ValidationError):
+        return _application_error_message(exc)
     return "Please provide all required application fields for this label."
 
 
@@ -315,7 +352,16 @@ def _elapsed_ms(started_at: float) -> int:
     return max(0, round((time.perf_counter() - started_at) * 1000))
 
 
-def _log_verification_latency(result: VerificationResult) -> None:
+def _log_verification_latency(
+    result: VerificationResult,
+    *,
+    read_ms: int = 0,
+    preprocess_ms: int = 0,
+    model_ms: int = 0,
+    comparison_ms: int = 0,
+    input_bytes: int = 0,
+    processed_bytes: int = 0,
+) -> None:
     latency_ms = result.latency_ms
     if latency_ms is None:
         return
@@ -325,19 +371,66 @@ def _log_verification_latency(result: VerificationResult) -> None:
         "latency_budget_ms": LATENCY_BUDGET_MS,
         "verdict": result.verdict,
         "over_budget": latency_ms > LATENCY_BUDGET_MS,
+        "read_ms": read_ms,
+        "preprocess_ms": preprocess_ms,
+        "model_ms": model_ms,
+        "comparison_ms": comparison_ms,
+        "input_bytes": input_bytes,
+        "processed_bytes": processed_bytes,
     }
     if latency_ms > LATENCY_BUDGET_MS:
         logger.warning(
-            "Verification exceeded latency budget: latency_ms=%s verdict=%s",
+            "Verification exceeded latency budget: latency_ms=%s read_ms=%s preprocess_ms=%s model_ms=%s comparison_ms=%s verdict=%s",
             latency_ms,
+            read_ms,
+            preprocess_ms,
+            model_ms,
+            comparison_ms,
             result.verdict,
             extra=extra,
         )
         return
 
     logger.info(
-        "Verification completed: latency_ms=%s verdict=%s",
+        "Verification completed: latency_ms=%s read_ms=%s preprocess_ms=%s model_ms=%s comparison_ms=%s verdict=%s",
         latency_ms,
+        read_ms,
+        preprocess_ms,
+        model_ms,
+        comparison_ms,
         result.verdict,
         extra=extra,
     )
+
+
+def _request_validation_message(exc: RequestValidationError) -> str:
+    for error in exc.errors():
+        location = error.get("loc", ())
+        field_name = str(location[-1]) if location else ""
+        if field_name in {"image", "images"}:
+            return "Choose a label image to continue."
+        if field_name == "applications":
+            return "Add application information for each label."
+        if field_name in FIELD_LABELS:
+            return f"Enter {FIELD_LABELS[field_name]}."
+    return "Please check the submitted information and try again."
+
+
+def _application_error_message(exc: ValidationError) -> str:
+    error = exc.errors()[0]
+    location = error.get("loc", ())
+    field_name = str(location[-1]) if location else ""
+    label = FIELD_LABELS.get(field_name, "application information")
+    error_type = str(error.get("type", ""))
+    message = str(error.get("msg", "")).removeprefix("Value error, ")
+    if error_type == "missing":
+        return f"Enter {label}."
+    if error_type == "string_too_long":
+        return f"{label} is too long."
+    if message == "must not be blank":
+        return f"Enter {label}."
+    if field_name == "abv":
+        return "Enter an alcohol percentage between 0 and 100, such as 13.5%."
+    if field_name == "net_contents":
+        return "Enter a positive container size in mL or L, such as 750 mL."
+    return f"Check {label} and try again."
