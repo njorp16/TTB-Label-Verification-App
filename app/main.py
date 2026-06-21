@@ -55,9 +55,19 @@ FIELD_LABELS = {
 app = FastAPI(title="TTB Label Verification")
 
 
-@lru_cache(maxsize=1)
 def get_vision_service() -> VisionService:
+    return DeferredVisionService()
+
+
+@lru_cache(maxsize=1)
+def _get_openai_vision_service() -> VisionService:
     return OpenAIVisionService()
+
+
+class DeferredVisionService:
+    async def extract_label(self, image_bytes: bytes, content_type: str):
+        service = _get_openai_vision_service()
+        return await service.extract_label(image_bytes, content_type)
 
 
 @app.exception_handler(RequestValidationError)
@@ -85,8 +95,11 @@ async def http_exception_handler(_request: Request, exc: HTTPException) -> JSONR
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "healthy"}
+def health() -> dict[str, str | bool]:
+    return {
+        "status": "healthy",
+        "vision_configured": bool(os.getenv("OPENAI_API_KEY")),
+    }
 
 
 @app.post("/verify", response_model=VerificationResult)

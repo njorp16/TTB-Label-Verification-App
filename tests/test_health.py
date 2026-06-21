@@ -11,6 +11,7 @@ def test_health_returns_healthy_status() -> None:
 
     assert response.status_code == 200
     assert response.json()["status"] == "healthy"
+    assert isinstance(response.json()["vision_configured"], bool)
 
 
 def test_frontend_loads() -> None:
