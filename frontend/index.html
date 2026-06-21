@@ -15,8 +15,21 @@
           <p class="lede">Add a label photo and enter the application information.</p>
         </header>
 
+        <nav class="mode-picker" aria-label="Choose verification type">
+          <button id="single-mode-button" class="mode-button mode-button-active" type="button" aria-pressed="true">One Label</button>
+          <button id="batch-mode-button" class="mode-button" type="button" aria-pressed="false">Batch of Labels</button>
+        </nav>
+
         <div id="error-summary" class="alert alert-error" role="alert" tabindex="-1" hidden></div>
         <div id="loading-status" class="sr-only" role="status" aria-live="polite"></div>
+
+        <section id="batch-progress" class="progress-panel" role="status" aria-live="polite" hidden>
+          <span class="progress-spinner" aria-hidden="true"></span>
+          <div>
+            <h2>Checking your labels</h2>
+            <p id="batch-progress-text">Please wait while the labels are checked.</p>
+          </div>
+        </section>
 
         <form id="verification-form" novalidate>
           <fieldset id="verification-fields">
@@ -106,6 +119,19 @@
             </button>
           </fieldset>
         </form>
+
+        <form id="batch-form" novalidate hidden>
+          <fieldset id="batch-fields">
+            <legend class="sr-only">Batch label and application information</legend>
+            <div class="batch-introduction">
+              <h2 tabindex="-1">Check a Batch of Labels</h2>
+              <p>Add one photo and its application information for each label. You can check up to 10 labels at once.</p>
+            </div>
+            <div id="batch-items" class="batch-items"></div>
+            <button id="add-batch-item" class="secondary-button" type="button">Add Another Label</button>
+            <button id="batch-submit-button" class="primary-button" type="submit">Check This Batch</button>
+          </fieldset>
+        </form>
       </section>
 
       <section id="results-view" class="panel results-panel" aria-labelledby="result-verdict" hidden>
@@ -127,7 +153,46 @@
 
         <button id="reset-button" class="primary-button" type="button">Check Another Label</button>
       </section>
+
+      <section id="batch-results-view" class="panel results-panel" aria-labelledby="batch-results-title" hidden>
+        <header class="batch-results-header">
+          <p class="eyebrow">Batch Verification Results</p>
+          <h1 id="batch-results-title" tabindex="-1">Batch Summary</h1>
+        </header>
+        <div id="batch-summary" class="summary-grid" aria-label="Batch result totals"></div>
+        <section class="result-section" aria-labelledby="individual-results-heading">
+          <h2 id="individual-results-heading">Individual Results</h2>
+          <p>Choose a label below to view its complete result.</p>
+          <div id="batch-result-items" class="batch-result-items"></div>
+        </section>
+        <button id="batch-reset-button" class="primary-button" type="button">Check Another Batch</button>
+      </section>
     </main>
+
+    <template id="batch-item-template">
+      <article class="batch-card">
+        <div class="batch-card-header">
+          <h3 class="batch-card-title">Label</h3>
+          <button class="remove-batch-item text-button" type="button">Remove</button>
+        </div>
+        <div class="batch-card-grid">
+          <div class="field-group field-group-wide batch-photo-field">
+            <label data-for="image">Label Photo</label>
+            <input data-name="image" type="file" accept="image/jpeg,image/png,image/webp" required />
+            <p class="help-text">JPEG, PNG, or WEBP. Maximum size: 10 MB.</p>
+            <p class="field-error" data-error-for="image" aria-live="polite"></p>
+            <p class="selected-file" data-selected-file>No photo selected.</p>
+          </div>
+          <div class="field-group"><label data-for="brand_name">Brand Name</label><input data-name="brand_name" type="text" autocomplete="off" required /><p class="field-error" data-error-for="brand_name"></p></div>
+          <div class="field-group"><label data-for="product_class">Type of Product</label><input data-name="product_class" type="text" autocomplete="off" required /><p class="field-error" data-error-for="product_class"></p></div>
+          <div class="field-group"><label data-for="producer">Producer or Bottler Name</label><input data-name="producer" type="text" autocomplete="organization" required /><p class="field-error" data-error-for="producer"></p></div>
+          <div class="field-group"><label data-for="country">Country of Origin</label><input data-name="country" type="text" autocomplete="country-name" required /><p class="field-error" data-error-for="country"></p></div>
+          <div class="field-group"><label data-for="abv">Alcohol Percentage (ABV)</label><input data-name="abv" type="text" inputmode="decimal" placeholder="For example: 13.5%" required /><p class="field-error" data-error-for="abv"></p></div>
+          <div class="field-group"><label data-for="net_contents">Container Size (Net Contents)</label><input data-name="net_contents" type="text" placeholder="For example: 750 mL" required /><p class="field-error" data-error-for="net_contents"></p></div>
+          <div class="field-group field-group-wide"><label data-for="government_warning">Government Health Warning</label><p class="help-text">Capital letters, punctuation, and spaces must match exactly.</p><textarea data-name="government_warning" rows="6" required></textarea><p class="field-error" data-error-for="government_warning"></p></div>
+        </div>
+      </article>
+    </template>
 
     <script src="/static/app.js"></script>
   </body>

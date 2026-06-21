@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 from typing import Any
 
@@ -14,6 +15,7 @@ from app.vision import (
     MAX_IMAGE_SIDE,
     OpenAIVisionService,
     VisionInputError,
+    VisionServiceError,
     VisionService,
     preprocess_image_for_vision,
 )
@@ -44,7 +46,7 @@ class FakeResponses:
         self.exception = exception
         self.calls: list[dict[str, Any]] = []
 
-    def create(self, **kwargs: Any) -> Any:
+    async def create(self, **kwargs: Any) -> Any:
         self.calls.append(kwargs)
         if self.exception is not None:
             raise self.exception
@@ -71,7 +73,7 @@ class FakeVisionService:
     def __init__(self, extracted: ExtractedLabel) -> None:
         self.extracted = extracted
 
-    def extract_label(self, image_bytes: bytes, content_type: str) -> ExtractedLabel:
+    async def extract_label(self, image_bytes: bytes, content_type: str) -> ExtractedLabel:
         return self.extracted
 
 
@@ -107,7 +109,7 @@ def test_structured_request_uses_model_image_input_schema_and_prompt() -> None:
         timeout_seconds=4.0,
     )
 
-    result = service.extract_label(_image_bytes((640, 480)), "image/png")
+    result = asyncio.run(service.extract_label(_image_bytes((640, 480)), "image/png"))
 
     assert result.brand_name == "Acme Reserve"
     assert len(client.responses.calls) == 1
@@ -144,7 +146,7 @@ def test_extract_label_preserves_partial_null_data() -> None:
     )
     service = OpenAIVisionService(client=FakeOpenAIClient(payload=payload))
 
-    result = service.extract_label(_image_bytes((640, 480)), "image/png")
+    result = asyncio.run(service.extract_label(_image_bytes((640, 480)), "image/png"))
 
     assert result == ExtractedLabel(
         brand_name="Acme Reserve",
@@ -157,30 +159,27 @@ def test_extract_label_preserves_partial_null_data() -> None:
     )
 
 
-def test_extract_label_returns_empty_label_for_malformed_output() -> None:
+def test_extract_label_raises_for_malformed_output() -> None:
     service = OpenAIVisionService(client=FakeOpenAIClient(output_text="not json"))
 
-    result = service.extract_label(_image_bytes((640, 480)), "image/png")
+    with pytest.raises(VisionServiceError, match="unusable response"):
+        asyncio.run(service.extract_label(_image_bytes((640, 480)), "image/png"))
 
-    assert result == ExtractedLabel()
 
-
-def test_extract_label_returns_empty_label_for_malformed_structured_payload() -> None:
+def test_extract_label_raises_for_malformed_structured_payload() -> None:
     payload = {field: None for field in EXTRACTED_LABEL_FIELDS}
     payload["brand_name"] = ["not", "a", "string"]
     service = OpenAIVisionService(client=FakeOpenAIClient(payload=payload))
 
-    result = service.extract_label(_image_bytes((640, 480)), "image/png")
+    with pytest.raises(VisionServiceError, match="unusable response"):
+        asyncio.run(service.extract_label(_image_bytes((640, 480)), "image/png"))
 
-    assert result == ExtractedLabel()
 
-
-def test_extract_label_returns_empty_label_for_timeout() -> None:
+def test_extract_label_raises_for_timeout() -> None:
     service = OpenAIVisionService(client=FakeOpenAIClient(exception=TimeoutError()))
 
-    result = service.extract_label(_image_bytes((640, 480)), "image/png")
-
-    assert result == ExtractedLabel()
+    with pytest.raises(VisionServiceError, match="did not respond"):
+        asyncio.run(service.extract_label(_image_bytes((640, 480)), "image/png"))
 
 
 def test_vision_service_can_be_mocked_with_protocol() -> None:
@@ -188,7 +187,7 @@ def test_vision_service_can_be_mocked_with_protocol() -> None:
         ExtractedLabel(brand_name="Fixture Brand", government_warning=None)
     )
 
-    result = service.extract_label(b"ignored", "image/jpeg")
+    result = asyncio.run(service.extract_label(b"ignored", "image/jpeg"))
 
     assert result.brand_name == "Fixture Brand"
     assert result.government_warning is None

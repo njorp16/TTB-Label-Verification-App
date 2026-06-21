@@ -7,7 +7,7 @@ import logging
 import os
 from typing import Any, Protocol
 
-from openai import OpenAI
+from openai import AsyncOpenAI
 from PIL import Image, UnidentifiedImageError
 from pydantic import ValidationError
 
@@ -55,8 +55,12 @@ class VisionInputError(ValueError):
     """Raised when uploaded bytes are not a decodable image."""
 
 
+class VisionServiceError(RuntimeError):
+    """Raised when the remote vision service cannot return a usable result."""
+
+
 class VisionService(Protocol):
-    def extract_label(self, image_bytes: bytes, content_type: str) -> ExtractedLabel:
+    async def extract_label(self, image_bytes: bytes, content_type: str) -> ExtractedLabel:
         ...
 
 
@@ -73,12 +77,11 @@ class OpenAIVisionService:
         )
         self._client = client or self._build_client()
 
-    def extract_label(self, image_bytes: bytes, content_type: str) -> ExtractedLabel:
-        preprocessed = preprocess_image_for_vision(image_bytes)
-        image_data_url = _jpeg_data_url(preprocessed)
+    async def extract_label(self, image_bytes: bytes, content_type: str) -> ExtractedLabel:
+        image_data_url = _jpeg_data_url(image_bytes)
 
         try:
-            response = self._client.responses.create(
+            response = await self._client.responses.create(
                 model=self.model,
                 timeout=self.timeout_seconds,
                 text={"format": _structured_output_format()},
@@ -98,24 +101,24 @@ class OpenAIVisionService:
             )
         except Exception as exc:
             logger.warning("Vision extraction request failed: %s", exc.__class__.__name__)
-            return _empty_extracted_label()
+            raise VisionServiceError("The label-reading service did not respond.") from exc
 
         payload = _payload_from_response(response)
         if payload is None:
             logger.warning("Vision extraction returned no usable structured payload.")
-            return _empty_extracted_label()
+            raise VisionServiceError("The label-reading service returned an unusable response.")
 
         try:
             return ExtractedLabel.model_validate(payload)
         except ValidationError:
             logger.warning("Vision extraction returned malformed structured payload.")
-            return _empty_extracted_label()
+            raise VisionServiceError("The label-reading service returned an unusable response.")
 
     @staticmethod
-    def _build_client() -> OpenAI:
+    def _build_client() -> AsyncOpenAI:
         if not os.getenv("OPENAI_API_KEY"):
             raise RuntimeError("OPENAI_API_KEY is required to use OpenAIVisionService.")
-        return OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+        return AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
 
 def preprocess_image_for_vision(image_bytes: bytes) -> bytes:
@@ -194,7 +197,3 @@ def _get_value(value: Any, key: str) -> Any:
     if isinstance(value, dict):
         return value.get(key)
     return getattr(value, key, None)
-
-
-def _empty_extracted_label() -> ExtractedLabel:
-    return ExtractedLabel(**{field: None for field in EXTRACTED_LABEL_FIELDS})

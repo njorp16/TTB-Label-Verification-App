@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import io
+import json
 from collections.abc import Iterator
 
 import pytest
@@ -31,7 +33,7 @@ class FakeVisionService:
         self.exception = exception
         self.calls: list[tuple[bytes, str]] = []
 
-    def extract_label(self, image_bytes: bytes, content_type: str) -> ExtractedLabel:
+    async def extract_label(self, image_bytes: bytes, content_type: str) -> ExtractedLabel:
         self.calls.append((image_bytes, content_type))
         if self.exception is not None:
             raise self.exception
@@ -221,6 +223,151 @@ def test_verify_shapes_unexpected_vision_errors_without_internal_details(
     assert "secret" not in response_text
 
 
+class ConcurrentVisionService:
+    def __init__(self, release_after: int = 3, fail_call: int | None = None) -> None:
+        self.release_after = release_after
+        self.fail_call = fail_call
+        self.started = 0
+        self.active = 0
+        self.max_active = 0
+        self.release = asyncio.Event()
+
+    async def extract_label(self, image_bytes: bytes, content_type: str) -> ExtractedLabel:
+        call_number = self.started
+        self.started += 1
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        if self.started >= self.release_after:
+            self.release.set()
+        try:
+            await asyncio.wait_for(self.release.wait(), timeout=1)
+            await asyncio.sleep(0.01)
+            if call_number == self.fail_call:
+                raise RuntimeError("isolated secret")
+            if call_number == 2:
+                return _matching_extracted(country="France")
+            return _matching_extracted()
+        finally:
+            self.active -= 1
+
+
+def test_batch_processes_concurrently_with_bounded_limit_and_correct_summary(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ConcurrentVisionService(release_after=3)
+    _override_vision_service(service)
+    monkeypatch.setenv("BATCH_CONCURRENCY_LIMIT", "3")
+
+    response = client.post(
+        "/verify/batch",
+        data={"applications": json.dumps([_form_data() for _ in range(6)])},
+        files=_batch_image_files(6),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert service.max_active == 3
+    assert service.started == 6
+    assert body["summary"] == {"passed": 5, "needs_review": 1, "total": 6}
+    assert [item["index"] for item in body["items"]] == list(range(6))
+    assert [item["filename"] for item in body["items"]] == [
+        f"label-{index + 1}.png" for index in range(6)
+    ]
+    review_items = [item for item in body["items"] if item["outcome"] == "NEEDS_REVIEW"]
+    assert len(review_items) == 1
+    assert review_items[0]["result"]["verdict"] == "NEEDS_REVIEW"
+
+
+def test_batch_isolates_item_error_and_counts_it_as_needs_review(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ConcurrentVisionService(release_after=3, fail_call=1)
+    _override_vision_service(service)
+    monkeypatch.setenv("BATCH_CONCURRENCY_LIMIT", "3")
+
+    response = client.post(
+        "/verify/batch",
+        data={"applications": json.dumps([_form_data() for _ in range(3)])},
+        files=_batch_image_files(3),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["summary"] == {"passed": 1, "needs_review": 2, "total": 3}
+    assert [item["index"] for item in body["items"]] == [0, 1, 2]
+    error_items = [item for item in body["items"] if item["outcome"] == "ERROR"]
+    assert len(error_items) == 1
+    assert error_items[0]["result"] is None
+    assert error_items[0]["error"] == "We could not process this label. Please try this label again."
+    assert "secret" not in response.text
+    assert sum(item["outcome"] == "PASS" for item in body["items"]) == 1
+    assert sum(item["outcome"] == "NEEDS_REVIEW" for item in body["items"]) == 1
+
+
+def test_batch_returns_invalid_image_as_item_error_without_failing_sibling(
+    client: TestClient,
+) -> None:
+    _override_vision_service(FakeVisionService())
+    files = _batch_image_files(1)
+    files.append(("images", ("broken.png", b"not an image", "image/png")))
+
+    response = client.post(
+        "/verify/batch",
+        data={"applications": json.dumps([_form_data(), _form_data()])},
+        files=files,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["summary"] == {"passed": 1, "needs_review": 1, "total": 2}
+    assert body["items"][0]["outcome"] == "PASS"
+    assert body["items"][1]["outcome"] == "ERROR"
+    assert body["items"][1]["error"] == "Uploaded file is not a valid image."
+
+
+@pytest.mark.parametrize(
+    ("application_case", "file_count", "message"),
+    [
+        ("invalid", 1, "Batch application information must be valid JSON."),
+        ("empty", 1, "Add at least one label to the batch."),
+        (
+            "two",
+            1,
+            "Each batch application must have one label image.",
+        ),
+        (
+            "eleven",
+            11,
+            "A batch can contain no more than 10 labels.",
+        ),
+    ],
+)
+def test_batch_rejects_structural_errors(
+    client: TestClient,
+    application_case: str,
+    file_count: int,
+    message: str,
+) -> None:
+    _override_vision_service(FakeVisionService())
+    application_values = {
+        "invalid": "not-json",
+        "empty": json.dumps([]),
+        "two": json.dumps([_form_data() for _ in range(2)]),
+        "eleven": json.dumps([_form_data() for _ in range(11)]),
+    }
+
+    response = client.post(
+        "/verify/batch",
+        data={"applications": application_values[application_case]},
+        files=_batch_image_files(file_count),
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"message": message}
+
+
 def _override_vision_service(service: VisionService) -> None:
     app.dependency_overrides[get_vision_service] = lambda: service
 
@@ -254,6 +401,13 @@ def _image_bytes() -> bytes:
     output = io.BytesIO()
     image.save(output, format="PNG")
     return output.getvalue()
+
+
+def _batch_image_files(count: int) -> list[tuple[str, tuple[str, bytes, str]]]:
+    return [
+        ("images", (f"label-{index + 1}.png", _image_bytes(), "image/png"))
+        for index in range(count)
+    ]
 
 
 def _field(body: dict[str, object], field_name: str) -> dict[str, object]:

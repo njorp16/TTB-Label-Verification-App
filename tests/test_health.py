@@ -62,3 +62,29 @@ def test_frontend_script_uses_existing_verify_contract() -> None:
     assert 'approved ? "APPROVED" : "NEEDS REVIEW"' in response.text
     assert "Application says" in response.text
     assert "Label says" in response.text
+
+
+def test_frontend_contains_batch_workflow_and_accessible_progress() -> None:
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert 'id="batch-mode-button"' in response.text
+    assert 'id="batch-form"' in response.text
+    assert 'id="batch-item-template"' in response.text
+    assert 'id="batch-progress"' in response.text
+    assert 'role="status"' in response.text
+    assert 'id="batch-summary"' in response.text
+    assert 'id="batch-result-items"' in response.text
+
+
+def test_frontend_script_submits_batch_and_renders_summary_and_drill_down() -> None:
+    response = client.get("/static/app.js")
+
+    assert response.status_code == 200
+    assert 'fetch("/verify/batch"' in response.text
+    assert 'body.append("applications", JSON.stringify(applications))' in response.text
+    assert 'body.append("images"' in response.text
+    assert 'createSummaryCount("Passed"' in response.text
+    assert 'createSummaryCount("Needs Review"' in response.text
+    assert 'document.createElement("details")' in response.text
+    assert "batchProgressTimer" in response.text

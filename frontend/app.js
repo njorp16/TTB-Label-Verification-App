@@ -24,8 +24,21 @@ const submitButton = document.getElementById("submit-button");
 const buttonLabel = submitButton.querySelector(".button-label");
 const spinner = submitButton.querySelector(".spinner");
 const resetButton = document.getElementById("reset-button");
+const singleModeButton = document.getElementById("single-mode-button");
+const batchModeButton = document.getElementById("batch-mode-button");
+const batchForm = document.getElementById("batch-form");
+const batchFieldset = document.getElementById("batch-fields");
+const batchItems = document.getElementById("batch-items");
+const batchItemTemplate = document.getElementById("batch-item-template");
+const addBatchItemButton = document.getElementById("add-batch-item");
+const batchProgress = document.getElementById("batch-progress");
+const batchProgressText = document.getElementById("batch-progress-text");
+const batchResultsView = document.getElementById("batch-results-view");
+const batchResetButton = document.getElementById("batch-reset-button");
 
 let previewUrl = null;
+let nextBatchItemId = 1;
+let batchProgressTimer = null;
 
 class DisplayError extends Error {}
 
@@ -84,6 +97,78 @@ form.addEventListener("submit", async (event) => {
 });
 
 resetButton.addEventListener("click", resetPage);
+singleModeButton.addEventListener("click", () => setMode("single"));
+batchModeButton.addEventListener("click", () => setMode("batch"));
+addBatchItemButton.addEventListener("click", () => addBatchItem(true));
+batchResetButton.addEventListener("click", resetBatchPage);
+
+batchForm.addEventListener("input", (event) => {
+  if (event.target.matches("[data-name]")) {
+    clearBatchFieldError(event.target);
+  }
+});
+
+batchForm.addEventListener("change", (event) => {
+  if (event.target.matches('[data-name="image"]')) {
+    clearBatchFieldError(event.target);
+    const card = event.target.closest(".batch-card");
+    const selected = card.querySelector("[data-selected-file]");
+    selected.textContent = event.target.files[0]
+      ? `Selected photo: ${event.target.files[0].name}`
+      : "No photo selected.";
+  }
+});
+
+batchForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  clearBatchErrors();
+  const cards = [...batchItems.querySelectorAll(".batch-card")];
+  const firstInvalid = validateBatch(cards);
+  if (firstInvalid) {
+    showErrorSummary("Please correct the highlighted information and try again.");
+    firstInvalid.focus();
+    return;
+  }
+
+  const body = new FormData();
+  const applications = cards.map((card) => {
+    const application = {};
+    Object.keys(FIELD_LABELS).forEach((name) => {
+      application[name] = card.querySelector(`[data-name="${name}"]`).value.trim();
+    });
+    body.append("images", card.querySelector('[data-name="image"]').files[0]);
+    return application;
+  });
+  body.append("applications", JSON.stringify(applications));
+  setBatchLoading(true, cards.length);
+
+  try {
+    const response = await fetch("/verify/batch", { method: "POST", body });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new DisplayError(
+        typeof payload?.message === "string"
+          ? payload.message
+          : "We could not check this batch. Please try again.",
+      );
+    }
+    if (!isBatchResult(payload)) {
+      throw new Error("Unexpected batch response");
+    }
+    renderBatchResults(payload);
+  } catch (error) {
+    const message = error instanceof DisplayError
+      ? error.message
+      : "We could not check this batch. Please check your connection and try again.";
+    showErrorSummary(message);
+    errorSummary.focus();
+  } finally {
+    setBatchLoading(false, cards.length);
+  }
+});
+
+addBatchItem();
+addBatchItem();
 
 function validateForm() {
   let firstInvalidControl = null;
@@ -266,7 +351,8 @@ function createPassRow(field) {
 
 function createStatusBadge(status) {
   const badge = document.createElement("span");
-  badge.className = `status-badge status-${status.toLowerCase()}`;
+  const statusClass = status.toLowerCase().replaceAll("_", "-").replaceAll(" ", "-");
+  badge.className = `status-badge status-${statusClass}`;
   badge.textContent = status;
   return badge;
 }
@@ -308,4 +394,210 @@ function resetPage() {
   formView.hidden = false;
   window.scrollTo({ top: 0, behavior: "auto" });
   document.getElementById("page-title").focus();
+}
+
+function setMode(mode) {
+  const batchMode = mode === "batch";
+  form.hidden = batchMode;
+  batchForm.hidden = !batchMode;
+  singleModeButton.classList.toggle("mode-button-active", !batchMode);
+  batchModeButton.classList.toggle("mode-button-active", batchMode);
+  singleModeButton.setAttribute("aria-pressed", String(!batchMode));
+  batchModeButton.setAttribute("aria-pressed", String(batchMode));
+  clearErrors();
+  clearBatchErrors();
+  (batchMode ? batchForm.querySelector("h2") : document.getElementById("page-title")).focus?.();
+}
+
+function addBatchItem(focusCard = false) {
+  const count = batchItems.querySelectorAll(".batch-card").length;
+  if (count >= 10) return;
+  const itemId = nextBatchItemId++;
+  const fragment = batchItemTemplate.content.cloneNode(true);
+  const card = fragment.querySelector(".batch-card");
+  card.dataset.itemId = String(itemId);
+  card.querySelectorAll("[data-name]").forEach((control) => {
+    const name = control.dataset.name;
+    control.id = `batch-${itemId}-${name}`;
+    control.setAttribute("aria-describedby", `batch-${itemId}-${name}-error`);
+  });
+  card.querySelectorAll("[data-for]").forEach((label) => {
+    label.htmlFor = `batch-${itemId}-${label.dataset.for}`;
+  });
+  card.querySelectorAll("[data-error-for]").forEach((error) => {
+    error.id = `batch-${itemId}-${error.dataset.errorFor}-error`;
+  });
+  card.querySelector(".remove-batch-item").addEventListener("click", () => {
+    card.remove();
+    renumberBatchCards();
+  });
+  batchItems.append(card);
+  renumberBatchCards();
+  if (focusCard) card.querySelector('[data-name="image"]').focus();
+}
+
+function renumberBatchCards() {
+  const cards = [...batchItems.querySelectorAll(".batch-card")];
+  cards.forEach((card, index) => {
+    card.querySelector(".batch-card-title").textContent = `Label ${index + 1}`;
+    card.querySelector(".remove-batch-item").hidden = cards.length === 1;
+  });
+  addBatchItemButton.disabled = cards.length >= 10;
+  addBatchItemButton.textContent = cards.length >= 10
+    ? "Maximum of 10 Labels Added"
+    : "Add Another Label";
+}
+
+function validateBatch(cards) {
+  let firstInvalid = null;
+  cards.forEach((card) => {
+    const image = card.querySelector('[data-name="image"]');
+    const file = image.files[0];
+    if (!file) {
+      firstInvalid = markBatchInvalid(image, "Choose a label photo.", firstInvalid);
+    } else if (!ACCEPTED_IMAGE_TYPES.has(file.type)) {
+      firstInvalid = markBatchInvalid(image, "Choose a JPEG, PNG, or WEBP photo.", firstInvalid);
+    } else if (file.size > MAX_UPLOAD_BYTES) {
+      firstInvalid = markBatchInvalid(image, "Choose a photo smaller than 10 MB.", firstInvalid);
+    }
+    Object.entries(FIELD_LABELS).forEach(([name, label]) => {
+      const control = card.querySelector(`[data-name="${name}"]`);
+      if (!control.value.trim()) {
+        firstInvalid = markBatchInvalid(control, `Enter the ${label}.`, firstInvalid);
+      }
+    });
+  });
+  return firstInvalid;
+}
+
+function markBatchInvalid(control, message, firstInvalid) {
+  control.setAttribute("aria-invalid", "true");
+  control.closest(".batch-card").querySelector(
+    `[data-error-for="${control.dataset.name}"]`,
+  ).textContent = message;
+  return firstInvalid || control;
+}
+
+function clearBatchFieldError(control) {
+  control.removeAttribute("aria-invalid");
+  control.closest(".batch-card").querySelector(
+    `[data-error-for="${control.dataset.name}"]`,
+  ).textContent = "";
+}
+
+function clearBatchErrors() {
+  batchItems.querySelectorAll("[data-name]").forEach(clearBatchFieldError);
+  errorSummary.hidden = true;
+  errorSummary.textContent = "";
+}
+
+function setBatchLoading(isLoading, count) {
+  batchFieldset.disabled = isLoading;
+  if (isLoading) {
+    batchProgressText.textContent = `Checking ${count} ${count === 1 ? "label" : "labels"}. Please wait.`;
+    batchProgressTimer = window.setTimeout(() => {
+      batchProgress.hidden = false;
+    }, 400);
+    loadingStatus.textContent = `Checking ${count} labels. Please wait.`;
+  } else {
+    window.clearTimeout(batchProgressTimer);
+    batchProgressTimer = null;
+    batchProgress.hidden = true;
+    loadingStatus.textContent = "";
+  }
+}
+
+function isBatchResult(payload) {
+  return payload
+    && Number.isInteger(payload.summary?.passed)
+    && Number.isInteger(payload.summary?.needs_review)
+    && Number.isInteger(payload.summary?.total)
+    && payload.summary.passed + payload.summary.needs_review === payload.summary.total
+    && Array.isArray(payload.items)
+    && payload.items.length === payload.summary.total
+    && payload.items.every((item) => (
+      typeof item.filename === "string"
+      && ["PASS", "NEEDS_REVIEW", "ERROR"].includes(item.outcome)
+      && (item.outcome === "ERROR" || isVerificationResult(item.result))
+    ));
+}
+
+function renderBatchResults(batch) {
+  const summary = document.getElementById("batch-summary");
+  summary.replaceChildren(
+    createSummaryCount("Passed", batch.summary.passed, "summary-passed"),
+    createSummaryCount("Needs Review", batch.summary.needs_review, "summary-review"),
+    createSummaryCount("Total", batch.summary.total, "summary-total"),
+  );
+  document.getElementById("batch-result-items").replaceChildren(
+    ...batch.items.map(createBatchResultItem),
+  );
+  formView.hidden = true;
+  resultsView.hidden = true;
+  batchResultsView.hidden = false;
+  window.scrollTo({ top: 0, behavior: "auto" });
+  document.getElementById("batch-results-title").focus();
+}
+
+function createSummaryCount(label, value, className) {
+  const card = document.createElement("div");
+  card.className = `summary-card ${className}`;
+  const number = document.createElement("strong");
+  number.textContent = String(value);
+  const text = document.createElement("span");
+  text.textContent = label;
+  card.append(number, text);
+  return card;
+}
+
+function createBatchResultItem(item) {
+  const details = document.createElement("details");
+  details.className = `batch-result batch-result-${item.outcome.toLowerCase().replace("_", "-")}`;
+  const summary = document.createElement("summary");
+  const filename = document.createElement("span");
+  filename.className = "batch-result-filename";
+  filename.textContent = item.filename;
+  summary.append(filename, createStatusBadge(item.outcome === "NEEDS_REVIEW" ? "NEEDS REVIEW" : item.outcome));
+  const content = document.createElement("div");
+  content.className = "batch-result-content";
+  if (item.outcome === "ERROR") {
+    const error = document.createElement("p");
+    error.className = "alert alert-error";
+    error.textContent = item.error || "We could not process this label. Please try it again.";
+    content.append(error);
+  } else {
+    const failed = item.result.fields.filter((field) => field.status === "FAIL");
+    const passed = item.result.fields.filter((field) => field.status === "PASS");
+    if (failed.length) content.append(createBatchFieldGroup("Items to Check", failed.map(createFailureCard)));
+    if (passed.length) content.append(createBatchFieldGroup("Items That Match", passed.map(createPassRow)));
+  }
+  details.append(summary, content);
+  return details;
+}
+
+function createBatchFieldGroup(titleText, children) {
+  const section = document.createElement("section");
+  section.className = "batch-detail-section";
+  const title = document.createElement("h3");
+  title.textContent = titleText;
+  const list = document.createElement("div");
+  list.className = "result-list";
+  list.append(...children);
+  section.append(title, list);
+  return section;
+}
+
+function resetBatchPage() {
+  batchForm.reset();
+  batchItems.replaceChildren();
+  addBatchItem();
+  addBatchItem();
+  clearBatchErrors();
+  document.getElementById("batch-result-items").replaceChildren();
+  batchResultsView.hidden = true;
+  formView.hidden = false;
+  setMode("batch");
+  window.scrollTo({ top: 0, behavior: "auto" });
+  batchForm.querySelector("h2").setAttribute("tabindex", "-1");
+  batchForm.querySelector("h2").focus();
 }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import io
 import mimetypes
 import sys
@@ -12,7 +13,7 @@ from PIL import Image, ImageDraw
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR))
 
-from app.vision import OpenAIVisionService
+from app.vision import OpenAIVisionService, preprocess_image_for_vision
 
 
 SAMPLE_WARNING = (
@@ -41,7 +42,10 @@ def main() -> None:
     load_dotenv()
 
     image_bytes, content_type = _load_image(args.image_path)
-    result = OpenAIVisionService().extract_label(image_bytes, content_type)
+    processed_image = preprocess_image_for_vision(image_bytes)
+    result = asyncio.run(
+        OpenAIVisionService().extract_label(processed_image, "image/jpeg")
+    )
     print(result.model_dump_json(indent=2))
 
 
