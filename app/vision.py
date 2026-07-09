@@ -9,12 +9,14 @@ from typing import Any, Protocol
 
 from openai import AsyncOpenAI
 from PIL import Image, ImageOps, UnidentifiedImageError
+from pillow_heif import register_heif_opener
 from pydantic import ValidationError
 
 from app.models import ExtractedLabel
 
 
 logger = logging.getLogger(__name__)
+register_heif_opener()
 
 DEFAULT_VISION_MODEL = "gpt-4.1-mini"
 DEFAULT_VISION_TIMEOUT_SECONDS = 4.5
@@ -29,6 +31,7 @@ CONTENT_TYPE_BY_FORMAT = {
     "JPEG": "image/jpeg",
     "PNG": "image/png",
     "WEBP": "image/webp",
+    "HEIF": "image/heif",
 }
 
 EXTRACTED_LABEL_FIELDS = (
@@ -53,6 +56,10 @@ class VisionInputError(ValueError):
 
 class VisionServiceError(RuntimeError):
     """Raised when the remote vision service cannot return a usable result."""
+
+
+class UnreadablePhotoError(RuntimeError):
+    """Raised when the service cannot read any label text from the photo."""
 
 
 class VisionService(Protocol):
@@ -129,10 +136,12 @@ class OpenAIVisionService:
             raise VisionServiceError("The label-reading service returned an unusable response.")
 
         try:
-            return ExtractedLabel.model_validate(payload)
+            extracted = ExtractedLabel.model_validate(payload)
         except ValidationError:
             logger.warning("Vision extraction returned malformed structured payload.")
             raise VisionServiceError("The label-reading service returned an unusable response.")
+        ensure_readable_label(extracted)
+        return extracted
 
     @staticmethod
     def _build_client() -> AsyncOpenAI:
@@ -140,6 +149,11 @@ class OpenAIVisionService:
             raise RuntimeError("OPENAI_API_KEY is required to use OpenAIVisionService.")
         client_options = {"api_key": os.environ["OPENAI_API_KEY"], "max_retries": 1}
         return AsyncOpenAI(**client_options)
+
+
+def ensure_readable_label(extracted: ExtractedLabel) -> None:
+    if all(not (getattr(extracted, field) or "").strip() for field in EXTRACTED_LABEL_FIELDS):
+        raise UnreadablePhotoError("We could not read this photo.")
 
 
 def preprocess_image_for_vision(
@@ -150,8 +164,8 @@ def preprocess_image_for_vision(
         with Image.open(io.BytesIO(image_bytes)) as image:
             decoded_type = CONTENT_TYPE_BY_FORMAT.get(image.format or "")
             if decoded_type is None:
-                raise VisionInputError("Upload must decode as a JPEG, PNG, or WEBP image.")
-            if expected_content_type is not None and decoded_type != expected_content_type:
+                raise VisionInputError("Upload must decode as a JPEG, PNG, WEBP, HEIC, or HEIF image.")
+            if expected_content_type is not None and decoded_type != _normalized_content_type(expected_content_type):
                 raise VisionInputError("The file type does not match the image contents.")
             if image.width * image.height > MAX_IMAGE_PIXELS:
                 raise VisionInputError("Uploaded image is too large. Use an image under 50 megapixels.")
@@ -168,6 +182,12 @@ def preprocess_image_for_vision(
         raise
     except (Image.DecompressionBombError, UnidentifiedImageError, OSError) as exc:
         raise VisionInputError("Uploaded file is not a valid image.") from exc
+
+
+def _normalized_content_type(content_type: str) -> str:
+    if content_type in {"image/heic", "image/heif"}:
+        return "image/heif"
+    return content_type
 
 
 def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:

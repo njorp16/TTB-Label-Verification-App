@@ -25,9 +25,11 @@ from app.models import (
 )
 from app.vision import (
     OpenAIVisionService,
+    UnreadablePhotoError,
     VisionInputError,
     VisionService,
     VisionServiceError,
+    ensure_readable_label,
     preprocess_image_for_vision,
 )
 
@@ -36,7 +38,8 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = BASE_DIR / "frontend"
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
-ACCEPTED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
+ACCEPTED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
+UNREADABLE_PHOTO_MESSAGE = "We could not read this photo. Please retake it with the label flat, clear, and well lit."
 LATENCY_BUDGET_MS = 5000
 MAX_BATCH_ITEMS = 10
 DEFAULT_BATCH_CONCURRENCY_LIMIT = 4
@@ -152,6 +155,8 @@ async def verify(
         raise
     except VisionInputError as exc:
         raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
+    except UnreadablePhotoError as exc:
+        raise HTTPException(status_code=422, detail={"message": UNREADABLE_PHOTO_MESSAGE}) from exc
     except VisionServiceError as exc:
         raise HTTPException(
             status_code=500,
@@ -237,6 +242,7 @@ async def _verify_one(
     preprocess_ms = _elapsed_ms(preprocess_started_at)
     model_started_at = time.perf_counter()
     extracted = await vision_service.extract_label(processed_image, "image/jpeg")
+    ensure_readable_label(extracted)
     model_ms = _elapsed_ms(model_started_at)
     comparison_started_at = time.perf_counter()
     result = verify_label(application, extracted)
@@ -275,6 +281,8 @@ async def _process_batch_item(
             )
         except (ValidationError, HTTPException, VisionInputError) as exc:
             message = _batch_input_error_message(exc)
+        except UnreadablePhotoError:
+            message = UNREADABLE_PHOTO_MESSAGE
         except VisionServiceError:
             message = "We could not read this label right now. Please try this label again."
         except Exception:
@@ -354,7 +362,7 @@ def _validate_upload_type(image: UploadFile) -> None:
     if image.content_type not in ACCEPTED_IMAGE_TYPES:
         raise HTTPException(
             status_code=400,
-            detail={"message": "Upload must be a JPEG, PNG, or WEBP image."},
+            detail={"message": "Upload must be a JPEG, PNG, WEBP, HEIC, or HEIF image."},
         )
 
 

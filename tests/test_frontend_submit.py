@@ -97,7 +97,7 @@ def test_single_label_submit_posts_all_application_fields(
 
             page.set_input_files("#image", str(image_path))
             for field_name, value in APPLICATION.items():
-                page.locator(f'[name="{field_name}"]').fill(value)
+                fill_application_field(page, field_name, value)
             page.get_by_role("button", name="Check This Label").click()
 
             expect(page.locator("#result-verdict")).to_have_text("APPROVED")
@@ -107,6 +107,52 @@ def test_single_label_submit_posts_all_application_fields(
     body = submitted["body"]
     for field_name in FORM_FIELD_NAMES:
         assert f'name="{field_name}"' in body
+
+
+def test_frontend_uses_image_picker_and_numeric_net_contents_controls(
+    live_app_url: str,
+) -> None:
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        try:
+            page.goto(live_app_url)
+
+            expect(page.locator("#image")).to_have_attribute("accept", "image/*")
+            expect(page.locator("#abv")).to_have_attribute("type", "number")
+            expect(page.locator("#net_contents_amount")).to_have_attribute("type", "number")
+
+            page.get_by_role("button", name="Batch of Labels").click()
+            expect(page.locator('[data-name="image"]').first).to_have_attribute("accept", "image/*")
+            expect(page.locator('[data-name="abv"]').first).to_have_attribute("type", "number")
+            expect(page.locator('[data-name="net_contents_amount"]').first).to_have_attribute("type", "number")
+        finally:
+            browser.close()
+
+
+def test_batch_copy_warning_fills_only_empty_warning_fields(
+    live_app_url: str,
+) -> None:
+    first_warning = GOVERNMENT_WARNING
+    second_warning = "Already typed warning"
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        try:
+            page.goto(live_app_url)
+            page.get_by_role("button", name="Batch of Labels").click()
+            warnings = page.locator('[data-name="government_warning"]')
+            warnings.nth(0).fill(first_warning)
+            warnings.nth(1).fill(second_warning)
+            page.get_by_role("button", name="Add Another Label").click()
+
+            page.get_by_role("button", name="Copy warning to all labels").click()
+
+            expect(warnings.nth(1)).to_have_value(second_warning)
+            expect(warnings.nth(2)).to_have_value(first_warning)
+        finally:
+            browser.close()
 
 
 def _verification_response() -> dict[str, object]:
@@ -125,6 +171,15 @@ def _verification_response() -> dict[str, object]:
         ],
         "latency_ms": 123,
     }
+
+
+def fill_application_field(page, field_name: str, value: str) -> None:
+    if field_name == "net_contents":
+        amount, unit = value.split(" ", 1)
+        page.locator('[name="net_contents_amount"]').fill(amount)
+        page.locator('[name="net_contents_unit"]').select_option(unit)
+        return
+    page.locator(f'[name="{field_name}"]').fill(value)
 
 
 def _write_png(path: Path) -> None:

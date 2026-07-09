@@ -125,11 +125,13 @@ def test_frontend_constrains_numeric_and_unit_inputs() -> None:
     assert response.status_code == 200
     assert 'id="abv" name="abv" type="number" min="0.1" max="100" step="0.1"' in response.text
     assert 'data-name="abv" type="number" min="0.1" max="100" step="0.1"' in response.text
+    assert 'id="net_contents_amount" name="net_contents_amount" type="number"' in response.text
+    assert 'data-name="net_contents_amount" type="number"' in response.text
 
     script_response = client.get("/static/app.js")
     assert script_response.status_code == 200
-    assert "fl" in script_response.text
-    assert "fluid" in script_response.text
+    assert "net_contents_unit" in response.text
+    assert "fl oz" in response.text
     assert "mL, L, or fl oz" in script_response.text
 
 

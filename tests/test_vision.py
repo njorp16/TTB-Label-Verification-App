@@ -15,6 +15,7 @@ from app.vision import (
     EXTRACTION_PROMPT,
     MAX_IMAGE_SIDE,
     OpenAIVisionService,
+    UnreadablePhotoError,
     VisionInputError,
     VisionServiceError,
     VisionService,
@@ -196,6 +197,14 @@ def test_extract_label_preserves_partial_null_data() -> None:
         net_contents=None,
         government_warning=None,
     )
+
+
+def test_extract_label_raises_unreadable_photo_for_all_null_payload() -> None:
+    payload = {field: None for field in EXTRACTED_LABEL_FIELDS}
+    service = OpenAIVisionService(client=FakeOpenAIClient(payload=payload))
+
+    with pytest.raises(UnreadablePhotoError, match="could not read"):
+        asyncio.run(service.extract_label(_image_bytes((640, 480)), "image/png"))
 
 
 def test_extract_label_raises_for_malformed_output() -> None:

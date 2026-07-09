@@ -8,6 +8,7 @@ dependencies = [
     "fastapi>=0.115.0",
     "openai>=2.0.0",
     "pillow>=10.4.0",
+    "pillow-heif>=1.4.0",
     "python-dotenv>=1.0.1",
     "python-multipart>=0.0.20",
     "rapidfuzz>=3.10.0",

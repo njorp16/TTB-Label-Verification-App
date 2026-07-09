@@ -169,7 +169,22 @@ def test_verify_rejects_unsupported_content_type(client: TestClient) -> None:
     )
 
     assert response.status_code == 400
-    assert response.json() == {"message": "Upload must be a JPEG, PNG, or WEBP image."}
+    assert response.json() == {"message": "Upload must be a JPEG, PNG, WEBP, HEIC, or HEIF image."}
+
+
+def test_verify_accepts_heic_upload_when_bytes_decode_as_heif(client: TestClient) -> None:
+    service = FakeVisionService()
+    _override_vision_service(service)
+
+    response = client.post(
+        "/verify",
+        data=_form_data(),
+        files={"image": ("label.heic", _heif_bytes(), "image/heic")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["verdict"] == "APPROVED"
+    assert len(service.calls) == 1
 
 
 def test_verify_rejects_empty_image_upload(client: TestClient) -> None:
@@ -283,6 +298,17 @@ def test_verify_shapes_unexpected_vision_errors_without_internal_details(
     assert "secret" not in response_text
 
 
+def test_verify_returns_distinct_unreadable_photo_state(client: TestClient) -> None:
+    _override_vision_service(FakeVisionService(extracted=ExtractedLabel()))
+
+    response = client.post("/verify", data=_form_data(), files=_image_file())
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "message": "We could not read this photo. Please retake it with the label flat, clear, and well lit."
+    }
+
+
 class ConcurrentVisionService:
     def __init__(self, release_after: int = 3, fail_call: int | None = None) -> None:
         self.release_after = release_after
@@ -309,6 +335,17 @@ class ConcurrentVisionService:
             return _matching_extracted()
         finally:
             self.active -= 1
+
+
+class SequenceVisionService:
+    def __init__(self, extracted_values: list[ExtractedLabel]) -> None:
+        self.extracted_values = extracted_values
+        self.calls = 0
+
+    async def extract_label(self, image_bytes: bytes, content_type: str) -> ExtractedLabel:
+        value = self.extracted_values[self.calls]
+        self.calls += 1
+        return value
 
 
 def test_batch_processes_concurrently_with_bounded_limit_and_correct_summary(
@@ -387,6 +424,29 @@ def test_batch_returns_invalid_image_as_item_error_without_failing_sibling(
     assert body["items"][1]["error"] == "Uploaded file is not a valid image."
 
 
+def test_batch_isolates_unreadable_photo_error(client: TestClient) -> None:
+    service = SequenceVisionService([
+        _matching_extracted(),
+        ExtractedLabel(),
+    ])
+    _override_vision_service(service)
+
+    response = client.post(
+        "/verify/batch",
+        data={"applications": json.dumps([_form_data(), _form_data()])},
+        files=_batch_image_files(2),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["summary"] == {"passed": 1, "needs_review": 1, "total": 2}
+    assert body["items"][0]["outcome"] == "APPROVED"
+    assert body["items"][1]["outcome"] == "ERROR"
+    assert body["items"][1]["error"] == (
+        "We could not read this photo. Please retake it with the label flat, clear, and well lit."
+    )
+
+
 @pytest.mark.parametrize(
     ("application_case", "file_count", "message"),
     [
@@ -460,6 +520,13 @@ def _image_bytes() -> bytes:
     image = Image.new("RGB", (32, 32), color=(240, 240, 240))
     output = io.BytesIO()
     image.save(output, format="PNG")
+    return output.getvalue()
+
+
+def _heif_bytes() -> bytes:
+    image = Image.new("RGB", (32, 32), color=(240, 240, 240))
+    output = io.BytesIO()
+    image.save(output, format="HEIF")
     return output.getvalue()
 
 
