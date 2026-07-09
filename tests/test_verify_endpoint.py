@@ -60,8 +60,9 @@ def test_verify_returns_result_with_latency_logs_and_uses_preprocessed_image(
 
     assert response.status_code == 200
     body = response.json()
-    assert body["verdict"] == "PASS"
-    assert len(body["fields"]) == 7
+    assert body["verdict"] == "APPROVED"
+    assert len(body["results"]) == 7
+    assert {"field", "match_type", "expected", "found", "status"} <= set(body["results"][0])
     assert isinstance(body["latency_ms"], int)
 
     assert len(service.calls) == 1
@@ -70,7 +71,7 @@ def test_verify_returns_result_with_latency_logs_and_uses_preprocessed_image(
     with Image.open(io.BytesIO(image_bytes)) as image:
         assert image.format == "JPEG"
     assert "Verification completed" in caplog.text
-    assert "verdict=PASS" in caplog.text
+    assert "verdict=APPROVED" in caplog.text
 
 
 def test_verify_logs_warning_when_latency_exceeds_budget(
@@ -101,8 +102,8 @@ def test_verify_returns_needs_review_for_mismatched_field(client: TestClient) ->
     body = response.json()
     assert body["verdict"] == "NEEDS_REVIEW"
     assert any(
-        field["field_name"] == "country" and field["status"] == "FAIL"
-        for field in body["fields"]
+        field["field"] == "country" and field["status"] == "FAIL"
+        for field in body["results"]
     )
 
 
@@ -117,7 +118,7 @@ def test_verify_government_warning_must_match_exactly(client: TestClient) -> Non
     government_warning = _field(response.json(), "government_warning")
     assert government_warning["status"] == "FAIL"
     assert government_warning["expected"] == GOVERNMENT_WARNING
-    assert government_warning["actual"] == extracted_warning
+    assert government_warning["found"] == extracted_warning
     assert "exact case-sensitive match" in government_warning["reason"]
 
 
@@ -227,8 +228,8 @@ def test_verify_rejects_mime_type_that_does_not_match_image(client: TestClient) 
     [
         ("abv", "not a percentage", "Enter an alcohol percentage between 0 and 100, such as 13.5%."),
         ("abv", "101%", "Enter an alcohol percentage between 0 and 100, such as 13.5%."),
-        ("net_contents", "one bottle", "Enter a positive container size in mL or L, such as 750 mL."),
-        ("net_contents", "0 ml", "Enter a positive container size in mL or L, such as 750 mL."),
+        ("net_contents", "one bottle", "Enter a positive container size in mL, L, or fl oz, such as 750 mL."),
+        ("net_contents", "0 ml", "Enter a positive container size in mL, L, or fl oz, such as 750 mL."),
     ],
 )
 def test_verify_rejects_invalid_application_formats(
@@ -358,7 +359,7 @@ def test_batch_isolates_item_error_and_counts_it_as_needs_review(
     assert error_items[0]["result"] is None
     assert error_items[0]["error"] == "We could not process this label. Please try this label again."
     assert "secret" not in response.text
-    assert sum(item["outcome"] == "PASS" for item in body["items"]) == 1
+    assert sum(item["outcome"] == "APPROVED" for item in body["items"]) == 1
     assert sum(item["outcome"] == "NEEDS_REVIEW" for item in body["items"]) == 1
 
 
@@ -378,7 +379,7 @@ def test_batch_returns_invalid_image_as_item_error_without_failing_sibling(
     assert response.status_code == 200
     body = response.json()
     assert body["summary"] == {"passed": 1, "needs_review": 1, "total": 2}
-    assert body["items"][0]["outcome"] == "PASS"
+    assert body["items"][0]["outcome"] == "APPROVED"
     assert body["items"][1]["outcome"] == "ERROR"
     assert body["items"][1]["error"] == "Uploaded file is not a valid image."
 
@@ -467,10 +468,10 @@ def _batch_image_files(count: int) -> list[tuple[str, tuple[str, bytes, str]]]:
 
 
 def _field(body: dict[str, object], field_name: str) -> dict[str, object]:
-    fields = body["fields"]
-    assert isinstance(fields, list)
-    for field in fields:
+    results = body["results"]
+    assert isinstance(results, list)
+    for field in results:
         assert isinstance(field, dict)
-        if field["field_name"] == field_name:
+        if field["field"] == field_name:
             return field
     raise AssertionError(f"Missing field {field_name}")

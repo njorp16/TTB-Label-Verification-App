@@ -60,11 +60,29 @@ def test_frontend_script_uses_existing_verify_contract() -> None:
     response = client.get("/static/app.js")
 
     assert response.status_code == 200
-    assert 'fetch("/verify"' in response.text
-    assert "new FormData(form)" in response.text
+    script = response.text
+    assert 'fetch("/verify"' in script
+    assert script.index("const body = new FormData(form)") < script.index("setLoading(true)")
     assert 'approved ? "APPROVED" : "NEEDS REVIEW"' in response.text
     assert "Application says" in response.text
     assert "Label says" in response.text
+    assert "payload.results" in script
+    assert "field.field" in script
+    assert "field.found" in script
+
+
+def test_frontend_constrains_numeric_and_unit_inputs() -> None:
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert 'id="abv" name="abv" type="number" min="0.1" max="100" step="0.1"' in response.text
+    assert 'data-name="abv" type="number" min="0.1" max="100" step="0.1"' in response.text
+
+    script_response = client.get("/static/app.js")
+    assert script_response.status_code == 200
+    assert "fl" in script_response.text
+    assert "fluid" in script_response.text
+    assert "mL, L, or fl oz" in script_response.text
 
 
 def test_frontend_contains_batch_workflow_and_accessible_progress() -> None:

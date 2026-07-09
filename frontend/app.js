@@ -75,10 +75,10 @@ form.addEventListener("submit", async (event) => {
     return;
   }
 
+  const body = new FormData(form);
   setLoading(true);
 
   try {
-    const body = new FormData(form);
     const optimizedImage = await optimizeImageForUpload(imageInput.files[0]);
     body.set("image", optimizedImage, optimizedFilename(imageInput.files[0].name));
     const response = await fetch("/verify", {
@@ -275,17 +275,17 @@ function updateImagePreview() {
 function validateApplicationFormats(container, firstInvalidControl) {
   const abv = container.querySelector('[name="abv"], [data-name="abv"]');
   const netContents = container.querySelector('[name="net_contents"], [data-name="net_contents"]');
-  const abvMatch = abv.value.match(/\d+(?:\.\d+)?/);
-  if (abv.value.trim() && (!abvMatch || Number(abvMatch[0]) <= 0 || Number(abvMatch[0]) > 100)) {
+  const abvValue = Number(abv.value);
+  if (abv.value.trim() && (!Number.isFinite(abvValue) || abvValue <= 0 || abvValue > 100)) {
     firstInvalidControl = container === form
       ? markInvalid(abv, "Enter an alcohol percentage between 0 and 100, such as 13.5%.", firstInvalidControl)
       : markBatchInvalid(abv, "Enter an alcohol percentage between 0 and 100, such as 13.5%.", firstInvalidControl);
   }
-  const netMatch = netContents.value.match(/^\s*(\d+(?:\.\d+)?)\s*(?:ml|milliliters?|millilitres?|l|liters?|litres?)\s*$/i);
+  const netMatch = netContents.value.match(/^\s*(\d+(?:\.\d+)?)\s*(?:ml|milliliters?|millilitres?|l|liters?|litres?|fl\.?\s*oz\.?|fluid\s+ounces?|oz\.?)\s*$/i);
   if (netContents.value.trim() && (!netMatch || Number(netMatch[1]) <= 0)) {
     firstInvalidControl = container === form
-      ? markInvalid(netContents, "Enter a positive container size in mL or L, such as 750 mL.", firstInvalidControl)
-      : markBatchInvalid(netContents, "Enter a positive container size in mL or L, such as 750 mL.", firstInvalidControl);
+      ? markInvalid(netContents, "Enter a positive container size in mL, L, or fl oz, such as 750 mL.", firstInvalidControl)
+      : markBatchInvalid(netContents, "Enter a positive container size in mL, L, or fl oz, such as 750 mL.", firstInvalidControl);
   }
   return firstInvalidControl;
 }
@@ -338,20 +338,21 @@ async function readJson(response) {
 
 function isVerificationResult(payload) {
   return payload
-    && (payload.verdict === "PASS" || payload.verdict === "NEEDS_REVIEW")
-    && Array.isArray(payload.fields)
-    && payload.fields.every((field) => (
-      typeof field.field_name === "string"
+    && (payload.verdict === "APPROVED" || payload.verdict === "NEEDS_REVIEW")
+    && Array.isArray(payload.results)
+    && payload.results.every((field) => (
+      typeof field.field === "string"
+      && typeof field.match_type === "string"
       && (field.status === "PASS" || field.status === "FAIL")
       && typeof field.expected === "string"
-      && typeof field.actual === "string"
+      && typeof field.found === "string"
     ));
 }
 
 function renderResults(result) {
-  const failedFields = result.fields.filter((field) => field.status === "FAIL");
-  const passedFields = result.fields.filter((field) => field.status === "PASS");
-  const approved = result.verdict === "PASS";
+  const failedFields = result.results.filter((field) => field.status === "FAIL");
+  const passedFields = result.results.filter((field) => field.status === "PASS");
+  const approved = result.verdict === "APPROVED";
 
   const banner = document.getElementById("verdict-banner");
   const verdict = document.getElementById("result-verdict");
@@ -385,7 +386,7 @@ function createFailureCard(field) {
   const header = document.createElement("div");
   header.className = "result-card-header";
   const title = document.createElement("h3");
-  title.textContent = displayFieldName(field.field_name);
+  title.textContent = displayFieldName(field.field);
   header.append(title, createStatusBadge("FAIL"));
 
   const explanation = document.createElement("p");
@@ -396,7 +397,7 @@ function createFailureCard(field) {
   comparison.className = "value-comparison";
   comparison.append(
     createValuePair("Application says", field.expected || "Not entered"),
-    createValuePair("Label says", field.actual || "Not found"),
+    createValuePair("Label says", field.found || "Not found"),
   );
 
   card.append(header, explanation, comparison);
@@ -408,7 +409,7 @@ function createPassRow(field) {
   row.className = "result-card result-pass";
   const name = document.createElement("span");
   name.className = "pass-name";
-  name.textContent = displayFieldName(field.field_name);
+  name.textContent = displayFieldName(field.field);
   row.append(name, createStatusBadge("PASS"));
   return row;
 }
@@ -436,10 +437,10 @@ function displayFieldName(fieldName) {
 }
 
 function failureExplanation(field) {
-  if (!field.actual.trim()) {
+  if (!field.found.trim()) {
     return "We could not read this information on the label.";
   }
-  if (field.field_name === "government_warning") {
+  if (field.field === "government_warning") {
     return "The warning does not match exactly. Check every capital letter, punctuation mark, and space.";
   }
   return "The application and label do not match.";
@@ -594,7 +595,7 @@ function isBatchResult(payload) {
     && payload.items.length === payload.summary.total
     && payload.items.every((item) => (
       typeof item.filename === "string"
-      && ["PASS", "NEEDS_REVIEW", "ERROR"].includes(item.outcome)
+      && ["APPROVED", "NEEDS_REVIEW", "ERROR"].includes(item.outcome)
       && (item.outcome === "ERROR" || isVerificationResult(item.result))
     ));
 }
@@ -643,8 +644,8 @@ function createBatchResultItem(item) {
     error.textContent = item.error || "We could not process this label. Please try it again.";
     content.append(error);
   } else {
-    const failed = item.result.fields.filter((field) => field.status === "FAIL");
-    const passed = item.result.fields.filter((field) => field.status === "PASS");
+    const failed = item.result.results.filter((field) => field.status === "FAIL");
+    const passed = item.result.results.filter((field) => field.status === "PASS");
     if (failed.length) content.append(createBatchFieldGroup("Items to Check", failed.map(createFailureCard)));
     if (passed.length) content.append(createBatchFieldGroup("Items That Match", passed.map(createPassRow)));
   }

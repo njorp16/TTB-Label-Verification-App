@@ -52,15 +52,16 @@ def _extracted(**overrides: str) -> ExtractedLabel:
 def test_exact_matches_produce_all_pass_and_overall_pass() -> None:
     result = verify_label(_application(), _extracted())
 
-    assert result.verdict == "PASS"
-    assert [field.status for field in result.fields] == ["PASS"] * 7
+    assert result.verdict == "APPROVED"
+    assert [field.status for field in result.results] == ["PASS"] * 7
+    assert {field.field for field in result.results} == set(ApplicationData.model_fields)
 
 
 def test_one_failing_field_produces_needs_review() -> None:
     result = verify_label(_application(), _extracted(country="France"))
 
     assert result.verdict == "NEEDS_REVIEW"
-    assert any(field.field_name == "country" and field.status == "FAIL" for field in result.fields)
+    assert any(field.field == "country" and field.status == "FAIL" for field in result.results)
 
 
 def test_brand_fuzzy_match_passes_for_minor_punctuation_case_and_spacing() -> None:
@@ -104,12 +105,17 @@ def test_producer_fuzzy_match_passes_for_small_formatting_differences() -> None:
         ("United States", "U.S.A."),
         ("USA", "United States"),
         ("United States of America", "United States"),
+        ("United Kingdom", "Great Britain"),
+        ("Italy", "Italia"),
+        ("Germany", "Deutschland"),
+        ("Spain", "Espana"),
     ],
 )
 def test_country_synonyms_pass(expected: str, actual: str) -> None:
     result = compare_country(expected, actual)
 
     assert result.status == "PASS"
+    assert result.match_type == "synonym"
 
 
 def test_different_countries_fail() -> None:
@@ -131,6 +137,13 @@ def test_abv_passes_with_alc_vol_and_proof_text() -> None:
     assert result.status == "PASS"
 
 
+def test_abv_passes_with_bare_proof() -> None:
+    result = compare_abv("45%", "90 Proof")
+
+    assert result.status == "PASS"
+    assert result.match_type == "numeric"
+
+
 def test_abv_fails_when_outside_tolerance() -> None:
     result = compare_abv("13.5%", "13.7%")
 
@@ -145,6 +158,20 @@ def test_net_contents_passes_for_ml_and_liter_equivalence() -> None:
 
 def test_net_contents_passes_with_case_only_unit_and_no_space() -> None:
     result = compare_net_contents("750 mL", "750ml")
+
+    assert result.status == "PASS"
+
+
+@pytest.mark.parametrize("actual", ["Contents: 750 mL", "750 mL (25 FL OZ)"])
+def test_net_contents_searches_inside_extracted_text(actual: str) -> None:
+    result = compare_net_contents("750 mL", actual)
+
+    assert result.status == "PASS"
+    assert result.match_type == "unit_normalized"
+
+
+def test_net_contents_passes_for_fluid_ounce_equivalence() -> None:
+    result = compare_net_contents("750 mL", "25.36 fl oz")
 
     assert result.status == "PASS"
 
@@ -204,7 +231,7 @@ def test_misread_government_warning_returns_extracted_text() -> None:
     result = compare_government_warning(GOVERNMENT_WARNING, misread_warning)
 
     assert result.status == "FAIL"
-    assert result.actual == misread_warning
+    assert result.found == misread_warning
 
 
 @pytest.mark.parametrize(
@@ -222,7 +249,8 @@ def test_misread_government_warning_returns_extracted_text() -> None:
 def test_blank_extracted_fields_fail_with_clear_reason(field_name: str, comparison) -> None:
     result = comparison("Expected value", "  ")
 
-    assert result.field_name == field_name
+    assert result.field == field_name
+    assert result.match_type == "missing"
     assert result.status == "FAIL"
     assert result.reason == "Extracted value is missing or blank."
 
@@ -242,9 +270,10 @@ def test_blank_extracted_fields_fail_with_clear_reason(field_name: str, comparis
 def test_none_extracted_fields_fail_with_clear_reason(field_name: str, comparison) -> None:
     result = comparison("Expected value", None)
 
-    assert result.field_name == field_name
+    assert result.field == field_name
+    assert result.match_type == "missing"
     assert result.status == "FAIL"
-    assert result.actual == ""
+    assert result.found == ""
     assert result.reason == "Extracted value is missing or blank."
 
 
@@ -252,4 +281,4 @@ def test_verify_label_treats_null_extracted_fields_as_needing_review() -> None:
     result = verify_label(_application(), ExtractedLabel())
 
     assert result.verdict == "NEEDS_REVIEW"
-    assert [field.status for field in result.fields] == ["FAIL"] * 7
+    assert [field.status for field in result.results] == ["FAIL"] * 7

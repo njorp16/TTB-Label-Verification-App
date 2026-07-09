@@ -9,7 +9,7 @@ A stateless proof of concept that compares alcohol-label images with application
 
 - Checks one label or a batch of up to 10 labels.
 - Extracts visible label text with a vision model.
-- Returns a clear `PASS` or `NEEDS_REVIEW` verdict with field-level reasons.
+- Returns a clear `APPROVED` or `NEEDS_REVIEW` verdict with field-level reasons.
 - Requires an exact, case-sensitive government-warning match.
 - Uses normalized or fuzzy comparison rules for all other fields.
 - Reports server latency for each single-label result.
@@ -76,8 +76,8 @@ Open http://localhost:8000. The same FastAPI process serves both the frontend an
 ## API
 
 - `GET /health` returns service and vision-configuration status.
-- `POST /verify` accepts one image plus application form fields.
-- `POST /verify/batch` accepts matching image and application arrays for 1–10 labels.
+- `POST /verify` accepts one image plus application form fields and returns `verdict`, `results`, and `latency_ms`. Each field result includes `field`, `match_type`, `expected`, `found`, and `status`, plus diagnostic `reason` and optional `score`.
+- `POST /verify/batch` accepts matching image and application arrays for 1–10 labels. Batch responses intentionally wrap each `VerificationResult` with `index`, `filename`, `outcome`, and per-item `error` fields so one failed item does not hide successful siblings.
 
 Uploads must be JPEG, PNG, or WebP images no larger than 10 MB each. API validation failures return safe user-facing messages without exposing tracebacks or credentials.
 

@@ -123,7 +123,7 @@ class OpenAIVisionService:
     def _build_client() -> AsyncOpenAI:
         if not os.getenv("OPENAI_API_KEY"):
             raise RuntimeError("OPENAI_API_KEY is required to use OpenAIVisionService.")
-        return AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"], max_retries=0)
+        return AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"], max_retries=1)
 
 
 def preprocess_image_for_vision(

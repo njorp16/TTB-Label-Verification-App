@@ -168,7 +168,7 @@ async def verify_batch(
         for index, (raw_application, image) in enumerate(zip(raw_applications, images))
     ]
     items = await asyncio.gather(*tasks)
-    passed = sum(item.outcome == "PASS" for item in items)
+    passed = sum(item.outcome == "APPROVED" for item in items)
     total = len(items)
     result = BatchVerificationResult(
         summary=BatchSummary(
@@ -445,5 +445,5 @@ def _application_error_message(exc: ValidationError) -> str:
     if field_name == "abv":
         return "Enter an alcohol percentage between 0 and 100, such as 13.5%."
     if field_name == "net_contents":
-        return "Enter a positive container size in mL or L, such as 750 mL."
+        return "Enter a positive container size in mL, L, or fl oz, such as 750 mL."
     return f"Check {label} and try again."

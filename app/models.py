@@ -5,8 +5,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 FieldStatus = Literal["PASS", "FAIL"]
-VerificationVerdict = Literal["PASS", "NEEDS_REVIEW"]
-BatchItemOutcome = Literal["PASS", "NEEDS_REVIEW", "ERROR"]
+VerificationVerdict = Literal["APPROVED", "NEEDS_REVIEW"]
+BatchItemOutcome = Literal["APPROVED", "NEEDS_REVIEW", "ERROR"]
 
 
 class ApplicationData(BaseModel):
@@ -39,7 +39,8 @@ class ApplicationData(BaseModel):
     @classmethod
     def net_contents_must_be_valid(cls, value: str) -> str:
         match = re.fullmatch(
-            r"\s*(\d+(?:\.\d+)?)\s*(ml|milliliters?|millilitres?|l|liters?|litres?)\s*",
+            r"\s*(\d+(?:\.\d+)?)\s*"
+            r"(ml|milliliters?|millilitres?|l|liters?|litres?|fl\.?\s*oz\.?|fluid\s+ounces?|oz\.?)\s*",
             value,
             re.IGNORECASE,
         )
@@ -59,9 +60,10 @@ class ExtractedLabel(BaseModel):
 
 
 class FieldResult(BaseModel):
-    field_name: str
+    field: str
+    match_type: str
     expected: str
-    actual: str
+    found: str
     status: FieldStatus
     reason: str
     score: float | None = None
@@ -69,7 +71,7 @@ class FieldResult(BaseModel):
 
 class VerificationResult(BaseModel):
     verdict: VerificationVerdict
-    fields: list[FieldResult]
+    results: list[FieldResult]
     latency_ms: int | None = None
 
 
