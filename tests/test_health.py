@@ -1,5 +1,8 @@
+import asyncio
+
 from fastapi.testclient import TestClient
 
+import app.main as main_module
 from app.main import app
 
 
@@ -12,6 +15,51 @@ def test_health_returns_healthy_status() -> None:
     assert response.status_code == 200
     assert response.json()["status"] == "healthy"
     assert isinstance(response.json()["vision_configured"], bool)
+
+
+def test_startup_model_validation_skips_without_openai_key(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    def fail_if_called():
+        raise AssertionError("startup should not build a vision client without an API key")
+
+    monkeypatch.setattr(main_module, "_get_openai_vision_service", fail_if_called)
+
+    asyncio.run(main_module.validate_vision_model_on_startup())
+
+
+def test_startup_model_validation_runs_with_openai_key(monkeypatch) -> None:
+    class FakeService:
+        validated = False
+
+        async def validate_model_config(self) -> None:
+            self.validated = True
+
+    service = FakeService()
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(main_module, "_get_openai_vision_service", lambda: service)
+
+    asyncio.run(main_module.validate_vision_model_on_startup())
+
+    assert service.validated is True
+
+
+def test_startup_model_validation_fails_loudly_with_openai_key(monkeypatch) -> None:
+    class FakeService:
+        async def validate_model_config(self) -> None:
+            raise RuntimeError("VISION_MODEL='bad-model' is not present in the OpenAI model list.")
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(main_module, "_get_openai_vision_service", lambda: FakeService())
+
+    try:
+        asyncio.run(main_module.validate_vision_model_on_startup())
+    except RuntimeError as exc:
+        assert "VISION_MODEL='bad-model'" in str(exc)
+    else:
+        raise AssertionError("startup should fail for an unknown model")
 
 
 def test_frontend_loads() -> None:

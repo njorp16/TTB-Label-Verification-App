@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import time
+from contextlib import asynccontextmanager
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -52,7 +53,25 @@ FIELD_LABELS = {
     "government_warning": "Government Health Warning",
 }
 
-app = FastAPI(title="TTB Label Verification")
+
+async def validate_vision_model_on_startup() -> None:
+    if not os.getenv("OPENAI_API_KEY"):
+        logger.info("Skipping VISION_MODEL startup validation because OPENAI_API_KEY is not configured.")
+        return
+
+    service = _get_openai_vision_service()
+    validate_model_config = getattr(service, "validate_model_config", None)
+    if validate_model_config is not None:
+        await validate_model_config()
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await validate_vision_model_on_startup()
+    yield
+
+
+app = FastAPI(title="TTB Label Verification", lifespan=lifespan)
 
 
 def get_vision_service() -> VisionService:

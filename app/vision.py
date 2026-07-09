@@ -17,7 +17,6 @@ from app.models import ExtractedLabel
 logger = logging.getLogger(__name__)
 
 DEFAULT_VISION_MODEL = "gpt-4.1-mini"
-LEGACY_VISION_MODEL = "gpt-5.4-mini"
 DEFAULT_VISION_TIMEOUT_SECONDS = 4.5
 DEFAULT_MAX_IMAGE_SIDE = 1024
 DEFAULT_JPEG_QUALITY = 80
@@ -70,9 +69,6 @@ class OpenAIVisionService:
         image_detail: str | None = None,
     ) -> None:
         configured_model = os.getenv("VISION_MODEL")
-        if configured_model == LEGACY_VISION_MODEL:
-            logger.info("Upgrading legacy VISION_MODEL to the Phase 6 default.")
-            configured_model = DEFAULT_VISION_MODEL
         self.model = model or configured_model or DEFAULT_VISION_MODEL
         self.timeout_seconds = timeout_seconds or _env_float(
             "VISION_TIMEOUT_SECONDS", DEFAULT_VISION_TIMEOUT_SECONDS, minimum=1.0, maximum=4.5
@@ -80,6 +76,25 @@ class OpenAIVisionService:
         configured_detail = image_detail or os.getenv("VISION_IMAGE_DETAIL", DEFAULT_IMAGE_DETAIL)
         self.image_detail = configured_detail if configured_detail in {"low", "high", "auto"} else DEFAULT_IMAGE_DETAIL
         self._client = client or self._build_client()
+
+    async def validate_model_config(self) -> None:
+        try:
+            response = await self._client.models.list()
+        except Exception as exc:
+            logger.error("Could not verify VISION_MODEL against the OpenAI model list.")
+            raise RuntimeError(
+                f"VISION_MODEL={self.model!r} could not be verified against the OpenAI model list."
+            ) from exc
+
+        model_ids = {
+            model_id
+            for model in _get_value(response, "data") or []
+            if isinstance(model_id := _get_value(model, "id"), str)
+        }
+        if self.model not in model_ids:
+            raise RuntimeError(
+                f"VISION_MODEL={self.model!r} is not present in the OpenAI model list."
+            )
 
     async def extract_label(self, image_bytes: bytes, content_type: str) -> ExtractedLabel:
         image_data_url = _jpeg_data_url(image_bytes)
@@ -123,7 +138,8 @@ class OpenAIVisionService:
     def _build_client() -> AsyncOpenAI:
         if not os.getenv("OPENAI_API_KEY"):
             raise RuntimeError("OPENAI_API_KEY is required to use OpenAIVisionService.")
-        return AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"], max_retries=1)
+        client_options = {"api_key": os.environ["OPENAI_API_KEY"], "max_retries": 1}
+        return AsyncOpenAI(**client_options)
 
 
 def preprocess_image_for_vision(

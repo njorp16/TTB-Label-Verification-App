@@ -41,11 +41,14 @@ class FakeVisionService:
 
 
 @pytest.fixture
-def client() -> Iterator[TestClient]:
+def client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    main_module._get_openai_vision_service.cache_clear()
     app.dependency_overrides.clear()
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+    main_module._get_openai_vision_service.cache_clear()
 
 
 def test_verify_returns_result_with_latency_logs_and_uses_preprocessed_image(
