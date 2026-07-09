@@ -216,14 +216,6 @@ def index() -> FileResponse:
     return FileResponse(FRONTEND_DIR / "index.html")
 
 
-def _validate_application_fields(fields: dict[str, str]) -> None:
-    if any(not value.strip() for value in fields.values()):
-        raise HTTPException(
-            status_code=400,
-            detail={"message": "Please provide all required application fields."},
-        )
-
-
 async def _verify_one(
     image: UploadFile,
     application: ApplicationData,
@@ -231,7 +223,6 @@ async def _verify_one(
     started_at: float | None = None,
 ) -> VerificationResult:
     started_at = started_at if started_at is not None else time.perf_counter()
-    _validate_application_fields(application.model_dump())
     _validate_upload_type(image)
     read_started_at = time.perf_counter()
     image_bytes = await image.read()
