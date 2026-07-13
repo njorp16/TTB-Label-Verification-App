@@ -35,36 +35,26 @@
           <fieldset id="verification-fields">
             <legend class="sr-only">Label and application information</legend>
 
-            <section class="form-section" aria-labelledby="photo-heading">
-              <div class="section-heading">
-                <span class="step-number" aria-hidden="true">1</span>
-                <h2 id="photo-heading">Add the label photo</h2>
+            <article class="label-card" aria-labelledby="single-card-title">
+              <div class="label-card-header">
+                <h2 id="single-card-title">Label 1</h2>
               </div>
-
-              <div class="file-control">
-                <label class="file-button" for="image">Choose Label Photo</label>
+              <div class="label-card-grid">
+                <div class="field-group field-group-wide photo-field">
+                  <label class="file-button" for="image">Choose Label Photo</label>
                 <input
                   id="image"
                   name="image"
                   type="file"
-                  accept="image/jpeg,image/png,image/webp"
+                  accept="image/*"
                   aria-describedby="image-help image-error"
                   required
                 />
-                <p id="image-help" class="help-text">JPEG, PNG, or WEBP. Maximum size: 10 MB.</p>
+                <p id="image-help" class="help-text">Common image formats, including phone-camera photos. Maximum size: 10 MB.</p>
                 <p id="image-error" class="field-error" aria-live="polite"></p>
                 <p id="selected-file" class="selected-file" aria-live="polite">No photo selected.</p>
                 <img id="image-preview" class="image-preview" alt="Preview of selected label photo" hidden />
               </div>
-            </section>
-
-            <section class="form-section" aria-labelledby="information-heading">
-              <div class="section-heading">
-                <span class="step-number" aria-hidden="true">2</span>
-                <h2 id="information-heading">Enter the application information</h2>
-              </div>
-
-              <div class="form-grid">
                 <div class="field-group">
                   <label for="brand_name">Brand Name</label>
                   <input id="brand_name" name="brand_name" type="text" maxlength="200" autocomplete="off" aria-describedby="brand_name-error" required />
@@ -93,14 +83,22 @@
                 <div class="field-group">
                   <label for="abv">Alcohol Percentage (ABV)</label>
                   <p class="help-text" id="abv-help">For example: 13.5%</p>
-                  <input id="abv" name="abv" type="text" maxlength="50" inputmode="decimal" autocomplete="off" aria-describedby="abv-help abv-error" required />
+                  <input id="abv" name="abv" type="number" min="0.1" max="100" step="0.1" autocomplete="off" aria-describedby="abv-help abv-error" required />
                   <p id="abv-error" class="field-error" aria-live="polite"></p>
                 </div>
 
                 <div class="field-group">
-                  <label for="net_contents">Container Size (Net Contents)</label>
+                  <label for="net_contents_amount">Container Size (Net Contents)</label>
                   <p class="help-text" id="net_contents-help">For example: 750 mL</p>
-                  <input id="net_contents" name="net_contents" type="text" maxlength="50" autocomplete="off" aria-describedby="net_contents-help net_contents-error" required />
+                  <div class="compound-field">
+                    <input id="net_contents" name="net_contents" type="hidden" />
+                    <input id="net_contents_amount" name="net_contents_amount" type="number" min="0.01" step="0.01" autocomplete="off" aria-describedby="net_contents-help net_contents-error" required />
+                    <select id="net_contents_unit" name="net_contents_unit" aria-label="Net contents unit">
+                      <option value="ml">mL</option>
+                      <option value="l">L</option>
+                      <option value="fl oz">fl oz</option>
+                    </select>
+                  </div>
                   <p id="net_contents-error" class="field-error" aria-live="polite"></p>
                 </div>
 
@@ -111,7 +109,7 @@
                   <p id="government_warning-error" class="field-error" aria-live="polite"></p>
                 </div>
               </div>
-            </section>
+            </article>
 
             <button id="submit-button" class="primary-button" type="submit">
               <span class="button-label">Check This Label</span>
@@ -178,8 +176,8 @@
         <div class="batch-card-grid">
           <div class="field-group field-group-wide batch-photo-field">
             <label data-for="image">Label Photo</label>
-            <input data-name="image" type="file" accept="image/jpeg,image/png,image/webp" required />
-            <p class="help-text">JPEG, PNG, or WEBP. Maximum size: 10 MB.</p>
+            <input data-name="image" type="file" accept="image/*" required />
+            <p class="help-text">Common image formats, including phone-camera photos. Maximum size: 10 MB.</p>
             <p class="field-error" data-error-for="image" aria-live="polite"></p>
             <p class="selected-file" data-selected-file>No photo selected.</p>
           </div>
@@ -187,9 +185,9 @@
           <div class="field-group"><label data-for="product_class">Type of Product</label><input data-name="product_class" type="text" maxlength="200" autocomplete="off" required /><p class="field-error" data-error-for="product_class" aria-live="polite"></p></div>
           <div class="field-group"><label data-for="producer">Producer or Bottler Name</label><input data-name="producer" type="text" maxlength="300" autocomplete="organization" required /><p class="field-error" data-error-for="producer" aria-live="polite"></p></div>
           <div class="field-group"><label data-for="country">Country of Origin</label><input data-name="country" type="text" maxlength="100" autocomplete="country-name" required /><p class="field-error" data-error-for="country" aria-live="polite"></p></div>
-          <div class="field-group"><label data-for="abv">Alcohol Percentage (ABV)</label><input data-name="abv" type="text" maxlength="50" inputmode="decimal" placeholder="For example: 13.5%" required /><p class="field-error" data-error-for="abv" aria-live="polite"></p></div>
-          <div class="field-group"><label data-for="net_contents">Container Size (Net Contents)</label><input data-name="net_contents" type="text" maxlength="50" placeholder="For example: 750 mL" required /><p class="field-error" data-error-for="net_contents" aria-live="polite"></p></div>
-          <div class="field-group field-group-wide"><label data-for="government_warning">Government Health Warning</label><p class="help-text">Capital letters, punctuation, and spaces must match exactly.</p><textarea data-name="government_warning" rows="6" maxlength="4000" required></textarea><p class="field-error" data-error-for="government_warning" aria-live="polite"></p></div>
+          <div class="field-group"><label data-for="abv">Alcohol Percentage (ABV)</label><input data-name="abv" type="number" min="0.1" max="100" step="0.1" placeholder="For example: 13.5" required /><p class="field-error" data-error-for="abv" aria-live="polite"></p></div>
+          <div class="field-group"><label data-for="net_contents_amount">Container Size (Net Contents)</label><p class="help-text">For example: 750 mL</p><div class="compound-field"><input data-name="net_contents" type="hidden" /><input data-name="net_contents_amount" type="number" min="0.01" step="0.01" placeholder="750" required /><select data-name="net_contents_unit" aria-label="Net contents unit"><option value="ml">mL</option><option value="l">L</option><option value="fl oz">fl oz</option></select></div><p class="field-error" data-error-for="net_contents" aria-live="polite"></p></div>
+          <div class="field-group field-group-wide"><div class="field-header"><label data-for="government_warning">Government Health Warning</label><button class="copy-warning-button secondary-inline-button" type="button" hidden>Copy warning to all labels</button></div><p class="help-text">Capital letters, punctuation, and spaces must match exactly.</p><textarea data-name="government_warning" rows="6" maxlength="4000" required></textarea><p class="field-error" data-error-for="government_warning" aria-live="polite"></p></div>
         </div>
       </article>
     </template>

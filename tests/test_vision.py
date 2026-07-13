@@ -15,6 +15,7 @@ from app.vision import (
     EXTRACTION_PROMPT,
     MAX_IMAGE_SIDE,
     OpenAIVisionService,
+    UnreadablePhotoError,
     VisionInputError,
     VisionServiceError,
     VisionService,
@@ -56,18 +57,36 @@ class FakeResponses:
         return {"output_text": self.output_text}
 
 
+class FakeModels:
+    def __init__(
+        self,
+        model_ids: list[str] | None = None,
+        exception: Exception | None = None,
+    ) -> None:
+        self.model_ids = model_ids or []
+        self.exception = exception
+
+    async def list(self) -> Any:
+        if self.exception is not None:
+            raise self.exception
+        return {"data": [{"id": model_id} for model_id in self.model_ids]}
+
+
 class FakeOpenAIClient:
     def __init__(
         self,
         payload: dict[str, Any] | None = None,
         output_text: str | None = None,
         exception: Exception | None = None,
+        model_ids: list[str] | None = None,
+        model_list_exception: Exception | None = None,
     ) -> None:
         self.responses = FakeResponses(
             payload=payload,
             output_text=output_text,
             exception=exception,
         )
+        self.models = FakeModels(model_ids=model_ids, exception=model_list_exception)
 
 
 class FakeVisionService:
@@ -180,6 +199,14 @@ def test_extract_label_preserves_partial_null_data() -> None:
     )
 
 
+def test_extract_label_raises_unreadable_photo_for_all_null_payload() -> None:
+    payload = {field: None for field in EXTRACTED_LABEL_FIELDS}
+    service = OpenAIVisionService(client=FakeOpenAIClient(payload=payload))
+
+    with pytest.raises(UnreadablePhotoError, match="could not read"):
+        asyncio.run(service.extract_label(_image_bytes((640, 480)), "image/png"))
+
+
 def test_extract_label_raises_for_malformed_output() -> None:
     service = OpenAIVisionService(client=FakeOpenAIClient(output_text="not json"))
 
@@ -203,14 +230,43 @@ def test_extract_label_raises_for_timeout() -> None:
         asyncio.run(service.extract_label(_image_bytes((640, 480)), "image/png"))
 
 
-def test_legacy_model_environment_upgrades_to_phase_6_default(
+def test_configured_model_environment_is_respected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("VISION_MODEL", "gpt-5.4-mini")
+    monkeypatch.setenv("VISION_MODEL", "custom-vision-model")
 
     service = OpenAIVisionService(client=FakeOpenAIClient())
 
-    assert service.model == DEFAULT_VISION_MODEL
+    assert service.model == "custom-vision-model"
+
+
+def test_validate_model_config_accepts_configured_model() -> None:
+    service = OpenAIVisionService(
+        client=FakeOpenAIClient(model_ids=["gpt-4.1-mini", "other-model"]),
+        model=DEFAULT_VISION_MODEL,
+    )
+
+    asyncio.run(service.validate_model_config())
+
+
+def test_validate_model_config_rejects_unknown_model() -> None:
+    service = OpenAIVisionService(
+        client=FakeOpenAIClient(model_ids=["other-model"]),
+        model=DEFAULT_VISION_MODEL,
+    )
+
+    with pytest.raises(RuntimeError, match="VISION_MODEL='gpt-4.1-mini'"):
+        asyncio.run(service.validate_model_config())
+
+
+def test_validate_model_config_fails_loudly_when_provider_check_fails() -> None:
+    service = OpenAIVisionService(
+        client=FakeOpenAIClient(model_list_exception=RuntimeError("network")),
+        model=DEFAULT_VISION_MODEL,
+    )
+
+    with pytest.raises(RuntimeError, match="could not be verified"):
+        asyncio.run(service.validate_model_config())
 
 
 def test_vision_service_can_be_mocked_with_protocol() -> None:

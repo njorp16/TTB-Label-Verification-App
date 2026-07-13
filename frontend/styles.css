@@ -115,31 +115,7 @@ fieldset {
   padding: 0;
 }
 
-.form-section + .form-section {
-  margin-top: 48px;
-}
-
-.section-heading {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-bottom: 24px;
-}
-
-.step-number {
-  display: inline-grid;
-  flex: 0 0 46px;
-  width: 46px;
-  height: 46px;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--primary);
-  color: #ffffff;
-  font-size: 25px;
-  font-weight: 700;
-}
-
-.file-control {
+.photo-field {
   border: 3px dashed var(--border);
   border-radius: 10px;
   background: #f8fafc;
@@ -235,6 +211,8 @@ textarea:focus-visible,
 }
 
 input[type="text"],
+input[type="number"],
+select,
 textarea {
   width: 100%;
   min-height: 56px;
@@ -451,6 +429,7 @@ fieldset:disabled {
 
 .mode-button,
 .secondary-button,
+.secondary-inline-button,
 .text-button {
   min-height: 54px;
   border: 3px solid var(--primary);
@@ -473,6 +452,12 @@ fieldset:disabled {
   font-size: 22px;
 }
 
+.secondary-inline-button {
+  min-height: 44px;
+  padding: 7px 12px;
+  font-size: 17px;
+}
+
 .secondary-button:disabled {
   border-color: var(--border);
   color: var(--muted);
@@ -488,6 +473,7 @@ fieldset:disabled {
 
 .mode-button:focus-visible,
 .secondary-button:focus-visible,
+.secondary-inline-button:focus-visible,
 .text-button:focus-visible,
 summary:focus-visible {
   outline: 4px solid var(--focus);
@@ -527,13 +513,15 @@ summary:focus-visible {
   gap: 28px;
 }
 
-.batch-card {
+.batch-card,
+.label-card {
   border: 3px solid #aeb8c3;
   border-radius: 10px;
   padding: 24px;
 }
 
-.batch-card-header {
+.batch-card-header,
+.label-card-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -543,10 +531,24 @@ summary:focus-visible {
   padding-bottom: 16px;
 }
 
-.batch-card-grid {
+.batch-card-grid,
+.label-card-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 24px;
+}
+
+.compound-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(96px, auto);
+  gap: 10px;
+}
+
+.field-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .batch-photo-field input[type="file"] {
@@ -649,6 +651,7 @@ summary:focus-visible {
   .form-grid,
   .value-comparison,
   .batch-card-grid,
+  .label-card-grid,
   .summary-grid {
     grid-template-columns: 1fr;
   }
@@ -669,5 +672,12 @@ summary:focus-visible {
   }
 
   .mode-picker { grid-template-columns: 1fr; }
-  .batch-card { padding: 18px 14px; }
+  .batch-card,
+  .label-card { padding: 18px 14px; }
+
+  .compound-field,
+  .field-header {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
 }

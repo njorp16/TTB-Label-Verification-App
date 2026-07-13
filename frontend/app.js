@@ -10,7 +10,8 @@ const MAX_TEXT_LENGTHS = {
 };
 const UPLOAD_IMAGE_MAX_SIDE = 1024;
 const UPLOAD_JPEG_QUALITY = 0.8;
-const ACCEPTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const ACCEPTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
+const ACCEPTED_IMAGE_EXTENSION = /\.(jpe?g|png|webp|heic|heif)$/i;
 
 const FIELD_LABELS = {
   brand_name: "Brand Name",
@@ -62,6 +63,9 @@ form.addEventListener("input", (event) => {
   if (Object.hasOwn(FIELD_LABELS, event.target.name)) {
     clearFieldError(event.target.name);
   }
+  if (event.target.name === "net_contents_amount" || event.target.name === "net_contents_unit") {
+    clearFieldError("net_contents");
+  }
 });
 
 form.addEventListener("submit", async (event) => {
@@ -75,12 +79,13 @@ form.addEventListener("submit", async (event) => {
     return;
   }
 
+  const body = new FormData(form);
   setLoading(true);
 
   try {
-    const body = new FormData(form);
-    const optimizedImage = await optimizeImageForUpload(imageInput.files[0]);
-    body.set("image", optimizedImage, optimizedFilename(imageInput.files[0].name));
+    const originalImage = imageInput.files[0];
+    const optimizedImage = await optimizeImageForUpload(originalImage);
+    body.set("image", optimizedImage, optimizedImage === originalImage ? originalImage.name : optimizedFilename(originalImage.name));
     const response = await fetch("/verify", {
       method: "POST",
       body,
@@ -146,6 +151,7 @@ batchForm.addEventListener("submit", async (event) => {
 
   const body = new FormData();
   const applications = cards.map((card) => {
+    syncNetContents(card);
     const application = {};
     Object.keys(FIELD_LABELS).forEach((name) => {
       application[name] = card.querySelector(`[data-name="${name}"]`).value;
@@ -158,7 +164,8 @@ batchForm.addEventListener("submit", async (event) => {
   try {
     const optimizedImages = await Promise.all(cards.map(async (card) => {
       const file = card.querySelector('[data-name="image"]').files[0];
-      return [await optimizeImageForUpload(file), optimizedFilename(file.name)];
+      const optimized = await optimizeImageForUpload(file);
+      return [optimized, optimized === file ? file.name : optimizedFilename(file.name)];
     }));
     optimizedImages.forEach(([file, name]) => body.append("images", file, name));
     const response = await fetch("/verify/batch", { method: "POST", body });
@@ -190,14 +197,15 @@ addBatchItem();
 
 function validateForm() {
   let firstInvalidControl = null;
+  syncNetContents(form);
   const file = imageInput.files[0];
 
   if (!file) {
     firstInvalidControl = markInvalid(imageInput, "Choose a label photo.", firstInvalidControl);
-  } else if (!ACCEPTED_IMAGE_TYPES.has(file.type)) {
+  } else if (!isAcceptedImageFile(file)) {
     firstInvalidControl = markInvalid(
       imageInput,
-      "Choose a JPEG, PNG, or WEBP photo.",
+      "Choose a supported image file.",
       firstInvalidControl,
     );
   } else if (file.size > MAX_UPLOAD_BYTES) {
@@ -210,9 +218,12 @@ function validateForm() {
 
   Object.entries(FIELD_LABELS).forEach(([name, label]) => {
     const control = form.elements.namedItem(name);
+    const visibleControl = name === "net_contents"
+      ? form.elements.namedItem("net_contents_amount")
+      : control;
     if (!control.value.trim()) {
       firstInvalidControl = markInvalid(
-        control,
+        visibleControl,
         `Enter the ${label}.`,
         firstInvalidControl,
       );
@@ -228,13 +239,16 @@ function validateForm() {
 
 function markInvalid(control, message, firstInvalidControl) {
   control.setAttribute("aria-invalid", "true");
-  document.getElementById(`${control.id}-error`).textContent = message;
+  document.getElementById(fieldErrorId(control)).textContent = message;
   return firstInvalidControl || control;
 }
 
 function clearFieldError(name) {
   const control = form.elements.namedItem(name);
   control.removeAttribute("aria-invalid");
+  if (name === "net_contents") {
+    form.elements.namedItem("net_contents_amount").removeAttribute("aria-invalid");
+  }
   document.getElementById(`${name}-error`).textContent = "";
 }
 
@@ -261,7 +275,7 @@ function updateImagePreview() {
   }
 
   selectedFile.textContent = `Selected photo: ${file.name}`;
-  if (!ACCEPTED_IMAGE_TYPES.has(file.type)) {
+  if (!isAcceptedImageFile(file)) {
     imagePreview.hidden = true;
     imagePreview.removeAttribute("src");
     return;
@@ -275,19 +289,32 @@ function updateImagePreview() {
 function validateApplicationFormats(container, firstInvalidControl) {
   const abv = container.querySelector('[name="abv"], [data-name="abv"]');
   const netContents = container.querySelector('[name="net_contents"], [data-name="net_contents"]');
-  const abvMatch = abv.value.match(/\d+(?:\.\d+)?/);
-  if (abv.value.trim() && (!abvMatch || Number(abvMatch[0]) <= 0 || Number(abvMatch[0]) > 100)) {
+  const netContentsAmount = container.querySelector('[name="net_contents_amount"], [data-name="net_contents_amount"]');
+  const abvValue = Number(abv.value);
+  if (abv.value.trim() && (!Number.isFinite(abvValue) || abvValue <= 0 || abvValue > 100)) {
     firstInvalidControl = container === form
       ? markInvalid(abv, "Enter an alcohol percentage between 0 and 100, such as 13.5%.", firstInvalidControl)
       : markBatchInvalid(abv, "Enter an alcohol percentage between 0 and 100, such as 13.5%.", firstInvalidControl);
   }
-  const netMatch = netContents.value.match(/^\s*(\d+(?:\.\d+)?)\s*(?:ml|milliliters?|millilitres?|l|liters?|litres?)\s*$/i);
-  if (netContents.value.trim() && (!netMatch || Number(netMatch[1]) <= 0)) {
+  const netAmount = Number(netContentsAmount.value);
+  if (netContentsAmount.value.trim() && (!Number.isFinite(netAmount) || netAmount <= 0)) {
     firstInvalidControl = container === form
-      ? markInvalid(netContents, "Enter a positive container size in mL or L, such as 750 mL.", firstInvalidControl)
-      : markBatchInvalid(netContents, "Enter a positive container size in mL or L, such as 750 mL.", firstInvalidControl);
+      ? markInvalid(netContentsAmount, "Enter a positive container size in mL, L, or fl oz, such as 750 mL.", firstInvalidControl)
+      : markBatchInvalid(netContentsAmount, "Enter a positive container size in mL, L, or fl oz, such as 750 mL.", firstInvalidControl);
   }
   return firstInvalidControl;
+}
+
+function syncNetContents(container) {
+  const netContents = container.querySelector('[name="net_contents"], [data-name="net_contents"]');
+  const amount = container.querySelector('[name="net_contents_amount"], [data-name="net_contents_amount"]');
+  const unit = container.querySelector('[name="net_contents_unit"], [data-name="net_contents_unit"]');
+  if (!netContents || !amount || !unit) return;
+  netContents.value = amount.value.trim() ? `${amount.value.trim()} ${unit.value}` : "";
+}
+
+function isAcceptedImageFile(file) {
+  return ACCEPTED_IMAGE_TYPES.has(file.type) || ACCEPTED_IMAGE_EXTENSION.test(file.name);
 }
 
 async function optimizeImageForUpload(file) {
@@ -338,20 +365,21 @@ async function readJson(response) {
 
 function isVerificationResult(payload) {
   return payload
-    && (payload.verdict === "PASS" || payload.verdict === "NEEDS_REVIEW")
-    && Array.isArray(payload.fields)
-    && payload.fields.every((field) => (
-      typeof field.field_name === "string"
+    && (payload.verdict === "APPROVED" || payload.verdict === "NEEDS_REVIEW")
+    && Array.isArray(payload.results)
+    && payload.results.every((field) => (
+      typeof field.field === "string"
+      && typeof field.match_type === "string"
       && (field.status === "PASS" || field.status === "FAIL")
       && typeof field.expected === "string"
-      && typeof field.actual === "string"
+      && typeof field.found === "string"
     ));
 }
 
 function renderResults(result) {
-  const failedFields = result.fields.filter((field) => field.status === "FAIL");
-  const passedFields = result.fields.filter((field) => field.status === "PASS");
-  const approved = result.verdict === "PASS";
+  const failedFields = result.results.filter((field) => field.status === "FAIL");
+  const passedFields = result.results.filter((field) => field.status === "PASS");
+  const approved = result.verdict === "APPROVED";
 
   const banner = document.getElementById("verdict-banner");
   const verdict = document.getElementById("result-verdict");
@@ -385,7 +413,7 @@ function createFailureCard(field) {
   const header = document.createElement("div");
   header.className = "result-card-header";
   const title = document.createElement("h3");
-  title.textContent = displayFieldName(field.field_name);
+  title.textContent = displayFieldName(field.field);
   header.append(title, createStatusBadge("FAIL"));
 
   const explanation = document.createElement("p");
@@ -396,7 +424,7 @@ function createFailureCard(field) {
   comparison.className = "value-comparison";
   comparison.append(
     createValuePair("Application says", field.expected || "Not entered"),
-    createValuePair("Label says", field.actual || "Not found"),
+    createValuePair("Label says", field.found || "Not found"),
   );
 
   card.append(header, explanation, comparison);
@@ -408,7 +436,7 @@ function createPassRow(field) {
   row.className = "result-card result-pass";
   const name = document.createElement("span");
   name.className = "pass-name";
-  name.textContent = displayFieldName(field.field_name);
+  name.textContent = displayFieldName(field.field);
   row.append(name, createStatusBadge("PASS"));
   return row;
 }
@@ -436,10 +464,10 @@ function displayFieldName(fieldName) {
 }
 
 function failureExplanation(field) {
-  if (!field.actual.trim()) {
+  if (!field.found.trim()) {
     return "We could not read this information on the label.";
   }
-  if (field.field_name === "government_warning") {
+  if (field.field === "government_warning") {
     return "The warning does not match exactly. Check every capital letter, punctuation mark, and space.";
   }
   return "The application and label do not match.";
@@ -491,6 +519,7 @@ function addBatchItem(focusCard = false) {
   card.querySelectorAll("[data-error-for]").forEach((error) => {
     error.id = `batch-${itemId}-${error.dataset.errorFor}-error`;
   });
+  card.querySelector(".copy-warning-button").addEventListener("click", copyFirstWarningToEmptyBatchCards);
   card.querySelector(".remove-batch-item").addEventListener("click", () => {
     const nextFocus = card.nextElementSibling?.querySelector('[data-name="image"]')
       || card.previousElementSibling?.querySelector('[data-name="image"]')
@@ -515,6 +544,8 @@ function renumberBatchCards() {
     const removeButton = card.querySelector(".remove-batch-item");
     removeButton.hidden = cards.length === 1;
     removeButton.setAttribute("aria-label", `Remove Label ${number}`);
+    const copyButton = card.querySelector(".copy-warning-button");
+    copyButton.hidden = index !== 0 || cards.length < 2;
   });
   addBatchItemButton.disabled = cards.length >= 10;
   addBatchItemButton.textContent = cards.length >= 10
@@ -526,20 +557,24 @@ function validateBatch(cards) {
   let firstInvalid = null;
   cards.forEach((card) => {
     const image = card.querySelector('[data-name="image"]');
+    syncNetContents(card);
     const file = image.files[0];
     if (!file) {
       firstInvalid = markBatchInvalid(image, "Choose a label photo.", firstInvalid);
-    } else if (!ACCEPTED_IMAGE_TYPES.has(file.type)) {
-      firstInvalid = markBatchInvalid(image, "Choose a JPEG, PNG, or WEBP photo.", firstInvalid);
+    } else if (!isAcceptedImageFile(file)) {
+      firstInvalid = markBatchInvalid(image, "Choose a supported image file.", firstInvalid);
     } else if (file.size > MAX_UPLOAD_BYTES) {
       firstInvalid = markBatchInvalid(image, "Choose a photo smaller than 10 MB.", firstInvalid);
     }
     Object.entries(FIELD_LABELS).forEach(([name, label]) => {
       const control = card.querySelector(`[data-name="${name}"]`);
+      const visibleControl = name === "net_contents"
+        ? card.querySelector('[data-name="net_contents_amount"]')
+        : control;
       if (!control.value.trim()) {
-        firstInvalid = markBatchInvalid(control, `Enter the ${label}.`, firstInvalid);
+        firstInvalid = markBatchInvalid(visibleControl, `Enter the ${label}.`, firstInvalid);
       } else if (control.value.length > MAX_TEXT_LENGTHS[name]) {
-        firstInvalid = markBatchInvalid(control, `${label} is too long.`, firstInvalid);
+        firstInvalid = markBatchInvalid(visibleControl, `${label} is too long.`, firstInvalid);
       }
     });
     firstInvalid = validateApplicationFormats(card, firstInvalid);
@@ -550,7 +585,7 @@ function validateBatch(cards) {
 function markBatchInvalid(control, message, firstInvalid) {
   control.setAttribute("aria-invalid", "true");
   control.closest(".batch-card").querySelector(
-    `[data-error-for="${control.dataset.name}"]`,
+    `[data-error-for="${batchErrorName(control)}"]`,
   ).textContent = message;
   return firstInvalid || control;
 }
@@ -558,8 +593,29 @@ function markBatchInvalid(control, message, firstInvalid) {
 function clearBatchFieldError(control) {
   control.removeAttribute("aria-invalid");
   control.closest(".batch-card").querySelector(
-    `[data-error-for="${control.dataset.name}"]`,
+    `[data-error-for="${batchErrorName(control)}"]`,
   ).textContent = "";
+}
+
+function batchErrorName(control) {
+  return control.dataset.name.startsWith("net_contents") ? "net_contents" : control.dataset.name;
+}
+
+function fieldErrorId(control) {
+  return control.id === "net_contents_amount" ? "net_contents-error" : `${control.id}-error`;
+}
+
+function copyFirstWarningToEmptyBatchCards() {
+  const cards = [...batchItems.querySelectorAll(".batch-card")];
+  const source = cards[0]?.querySelector('[data-name="government_warning"]');
+  const warning = source?.value ?? "";
+  cards.slice(1).forEach((card) => {
+    const target = card.querySelector('[data-name="government_warning"]');
+    if (!target.value.trim()) {
+      target.value = warning;
+      clearBatchFieldError(target);
+    }
+  });
 }
 
 function clearBatchErrors() {
@@ -594,7 +650,7 @@ function isBatchResult(payload) {
     && payload.items.length === payload.summary.total
     && payload.items.every((item) => (
       typeof item.filename === "string"
-      && ["PASS", "NEEDS_REVIEW", "ERROR"].includes(item.outcome)
+      && ["APPROVED", "NEEDS_REVIEW", "ERROR"].includes(item.outcome)
       && (item.outcome === "ERROR" || isVerificationResult(item.result))
     ));
 }
@@ -643,8 +699,8 @@ function createBatchResultItem(item) {
     error.textContent = item.error || "We could not process this label. Please try it again.";
     content.append(error);
   } else {
-    const failed = item.result.fields.filter((field) => field.status === "FAIL");
-    const passed = item.result.fields.filter((field) => field.status === "PASS");
+    const failed = item.result.results.filter((field) => field.status === "FAIL");
+    const passed = item.result.results.filter((field) => field.status === "PASS");
     if (failed.length) content.append(createBatchFieldGroup("Items to Check", failed.map(createFailureCard)));
     if (passed.length) content.append(createBatchFieldGroup("Items That Match", passed.map(createPassRow)));
   }

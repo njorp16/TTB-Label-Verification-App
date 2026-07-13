@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import time
+from contextlib import asynccontextmanager
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -24,9 +25,11 @@ from app.models import (
 )
 from app.vision import (
     OpenAIVisionService,
+    UnreadablePhotoError,
     VisionInputError,
     VisionService,
     VisionServiceError,
+    ensure_readable_label,
     preprocess_image_for_vision,
 )
 
@@ -35,7 +38,8 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = BASE_DIR / "frontend"
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
-ACCEPTED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
+ACCEPTED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
+UNREADABLE_PHOTO_MESSAGE = "We could not read this photo. Please retake it with the label flat, clear, and well lit."
 LATENCY_BUDGET_MS = 5000
 MAX_BATCH_ITEMS = 10
 DEFAULT_BATCH_CONCURRENCY_LIMIT = 4
@@ -52,7 +56,25 @@ FIELD_LABELS = {
     "government_warning": "Government Health Warning",
 }
 
-app = FastAPI(title="TTB Label Verification")
+
+async def validate_vision_model_on_startup() -> None:
+    if not os.getenv("OPENAI_API_KEY"):
+        logger.info("Skipping VISION_MODEL startup validation because OPENAI_API_KEY is not configured.")
+        return
+
+    service = _get_openai_vision_service()
+    validate_model_config = getattr(service, "validate_model_config", None)
+    if validate_model_config is not None:
+        await validate_model_config()
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await validate_vision_model_on_startup()
+    yield
+
+
+app = FastAPI(title="TTB Label Verification", lifespan=lifespan)
 
 
 def get_vision_service() -> VisionService:
@@ -133,6 +155,8 @@ async def verify(
         raise
     except VisionInputError as exc:
         raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
+    except UnreadablePhotoError as exc:
+        raise HTTPException(status_code=422, detail={"message": UNREADABLE_PHOTO_MESSAGE}) from exc
     except VisionServiceError as exc:
         raise HTTPException(
             status_code=500,
@@ -168,7 +192,7 @@ async def verify_batch(
         for index, (raw_application, image) in enumerate(zip(raw_applications, images))
     ]
     items = await asyncio.gather(*tasks)
-    passed = sum(item.outcome == "PASS" for item in items)
+    passed = sum(item.outcome == "APPROVED" for item in items)
     total = len(items)
     result = BatchVerificationResult(
         summary=BatchSummary(
@@ -197,14 +221,6 @@ def index() -> FileResponse:
     return FileResponse(FRONTEND_DIR / "index.html")
 
 
-def _validate_application_fields(fields: dict[str, str]) -> None:
-    if any(not value.strip() for value in fields.values()):
-        raise HTTPException(
-            status_code=400,
-            detail={"message": "Please provide all required application fields."},
-        )
-
-
 async def _verify_one(
     image: UploadFile,
     application: ApplicationData,
@@ -212,7 +228,6 @@ async def _verify_one(
     started_at: float | None = None,
 ) -> VerificationResult:
     started_at = started_at if started_at is not None else time.perf_counter()
-    _validate_application_fields(application.model_dump())
     _validate_upload_type(image)
     read_started_at = time.perf_counter()
     image_bytes = await image.read()
@@ -227,6 +242,7 @@ async def _verify_one(
     preprocess_ms = _elapsed_ms(preprocess_started_at)
     model_started_at = time.perf_counter()
     extracted = await vision_service.extract_label(processed_image, "image/jpeg")
+    ensure_readable_label(extracted)
     model_ms = _elapsed_ms(model_started_at)
     comparison_started_at = time.perf_counter()
     result = verify_label(application, extracted)
@@ -265,6 +281,8 @@ async def _process_batch_item(
             )
         except (ValidationError, HTTPException, VisionInputError) as exc:
             message = _batch_input_error_message(exc)
+        except UnreadablePhotoError:
+            message = UNREADABLE_PHOTO_MESSAGE
         except VisionServiceError:
             message = "We could not read this label right now. Please try this label again."
         except Exception:
@@ -344,7 +362,7 @@ def _validate_upload_type(image: UploadFile) -> None:
     if image.content_type not in ACCEPTED_IMAGE_TYPES:
         raise HTTPException(
             status_code=400,
-            detail={"message": "Upload must be a JPEG, PNG, or WEBP image."},
+            detail={"message": "Upload must be a JPEG, PNG, WEBP, HEIC, or HEIF image."},
         )
 
 
@@ -445,5 +463,5 @@ def _application_error_message(exc: ValidationError) -> str:
     if field_name == "abv":
         return "Enter an alcohol percentage between 0 and 100, such as 13.5%."
     if field_name == "net_contents":
-        return "Enter a positive container size in mL or L, such as 750 mL."
+        return "Enter a positive container size in mL, L, or fl oz, such as 750 mL."
     return f"Check {label} and try again."

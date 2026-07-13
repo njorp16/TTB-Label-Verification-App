@@ -67,7 +67,7 @@ def main() -> None:
         clean_image = label_image(WARNING)
         valid_response, valid_wall_ms = verify(client, APPLICATION, clean_image)
         valid_payload = safe_json(valid_response)
-        checks.append(result_check("valid_label_and_correct_warning", valid_response, valid_wall_ms, "PASS"))
+        checks.append(result_check("valid_label_and_correct_warning", valid_response, valid_wall_ms, "APPROVED"))
 
         mismatch = {**APPLICATION, "country": "France"}
         response, wall_ms = verify(client, mismatch, clean_image)
@@ -75,11 +75,11 @@ def main() -> None:
 
         case_only = {**APPLICATION, "brand_name": "ACME RESERVE"}
         response, wall_ms = verify(client, case_only, clean_image)
-        checks.append(result_check("case_only", response, wall_ms, "PASS"))
+        checks.append(result_check("case_only", response, wall_ms, "APPROVED"))
 
         normalized = {**APPLICATION, "abv": "13.50 percent", "net_contents": "0.75 L"}
         response, wall_ms = verify(client, normalized, clean_image)
-        checks.append(result_check("abv_and_units_normalization", response, wall_ms, "PASS"))
+        checks.append(result_check("abv_and_units_normalization", response, wall_ms, "APPROVED"))
 
         response, wall_ms = verify(client, APPLICATION, label_image(None))
         checks.append(result_check("missing_warning", response, wall_ms, "NEEDS_REVIEW", "government_warning"))
@@ -91,7 +91,7 @@ def main() -> None:
         response, wall_ms = verify(client, APPLICATION, imperfect)
         checks.append(Check(
             "imperfect_image_graceful",
-            response.status_code == 200 and safe_json(response).get("verdict") in {"PASS", "NEEDS_REVIEW"},
+            response.status_code == 200 and safe_json(response).get("verdict") in {"APPROVED", "NEEDS_REVIEW"},
             response.status_code,
             wall_ms,
             safe_json(response).get("latency_ms"),
@@ -175,8 +175,8 @@ def result_check(
 ) -> Check:
     payload = safe_json(response)
     field_failed = failed_field is None or any(
-        item.get("field_name") == failed_field and item.get("status") == "FAIL"
-        for item in payload.get("fields", [])
+        item.get("field") == failed_field and item.get("status") == "FAIL"
+        for item in payload.get("results", [])
     )
     return Check(
         name,

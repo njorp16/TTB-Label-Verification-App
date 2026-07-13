@@ -41,11 +41,14 @@ class FakeVisionService:
 
 
 @pytest.fixture
-def client() -> Iterator[TestClient]:
+def client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    main_module._get_openai_vision_service.cache_clear()
     app.dependency_overrides.clear()
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+    main_module._get_openai_vision_service.cache_clear()
 
 
 def test_verify_returns_result_with_latency_logs_and_uses_preprocessed_image(
@@ -60,8 +63,9 @@ def test_verify_returns_result_with_latency_logs_and_uses_preprocessed_image(
 
     assert response.status_code == 200
     body = response.json()
-    assert body["verdict"] == "PASS"
-    assert len(body["fields"]) == 7
+    assert body["verdict"] == "APPROVED"
+    assert len(body["results"]) == 7
+    assert {"field", "match_type", "expected", "found", "status"} <= set(body["results"][0])
     assert isinstance(body["latency_ms"], int)
 
     assert len(service.calls) == 1
@@ -70,7 +74,7 @@ def test_verify_returns_result_with_latency_logs_and_uses_preprocessed_image(
     with Image.open(io.BytesIO(image_bytes)) as image:
         assert image.format == "JPEG"
     assert "Verification completed" in caplog.text
-    assert "verdict=PASS" in caplog.text
+    assert "verdict=APPROVED" in caplog.text
 
 
 def test_verify_logs_warning_when_latency_exceeds_budget(
@@ -101,8 +105,8 @@ def test_verify_returns_needs_review_for_mismatched_field(client: TestClient) ->
     body = response.json()
     assert body["verdict"] == "NEEDS_REVIEW"
     assert any(
-        field["field_name"] == "country" and field["status"] == "FAIL"
-        for field in body["fields"]
+        field["field"] == "country" and field["status"] == "FAIL"
+        for field in body["results"]
     )
 
 
@@ -117,7 +121,7 @@ def test_verify_government_warning_must_match_exactly(client: TestClient) -> Non
     government_warning = _field(response.json(), "government_warning")
     assert government_warning["status"] == "FAIL"
     assert government_warning["expected"] == GOVERNMENT_WARNING
-    assert government_warning["actual"] == extracted_warning
+    assert government_warning["found"] == extracted_warning
     assert "exact case-sensitive match" in government_warning["reason"]
 
 
@@ -165,7 +169,22 @@ def test_verify_rejects_unsupported_content_type(client: TestClient) -> None:
     )
 
     assert response.status_code == 400
-    assert response.json() == {"message": "Upload must be a JPEG, PNG, or WEBP image."}
+    assert response.json() == {"message": "Upload must be a JPEG, PNG, WEBP, HEIC, or HEIF image."}
+
+
+def test_verify_accepts_heic_upload_when_bytes_decode_as_heif(client: TestClient) -> None:
+    service = FakeVisionService()
+    _override_vision_service(service)
+
+    response = client.post(
+        "/verify",
+        data=_form_data(),
+        files={"image": ("label.heic", _heif_bytes(), "image/heic")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["verdict"] == "APPROVED"
+    assert len(service.calls) == 1
 
 
 def test_verify_rejects_empty_image_upload(client: TestClient) -> None:
@@ -227,8 +246,8 @@ def test_verify_rejects_mime_type_that_does_not_match_image(client: TestClient) 
     [
         ("abv", "not a percentage", "Enter an alcohol percentage between 0 and 100, such as 13.5%."),
         ("abv", "101%", "Enter an alcohol percentage between 0 and 100, such as 13.5%."),
-        ("net_contents", "one bottle", "Enter a positive container size in mL or L, such as 750 mL."),
-        ("net_contents", "0 ml", "Enter a positive container size in mL or L, such as 750 mL."),
+        ("net_contents", "one bottle", "Enter a positive container size in mL, L, or fl oz, such as 750 mL."),
+        ("net_contents", "0 ml", "Enter a positive container size in mL, L, or fl oz, such as 750 mL."),
     ],
 )
 def test_verify_rejects_invalid_application_formats(
@@ -279,6 +298,17 @@ def test_verify_shapes_unexpected_vision_errors_without_internal_details(
     assert "secret" not in response_text
 
 
+def test_verify_returns_distinct_unreadable_photo_state(client: TestClient) -> None:
+    _override_vision_service(FakeVisionService(extracted=ExtractedLabel()))
+
+    response = client.post("/verify", data=_form_data(), files=_image_file())
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "message": "We could not read this photo. Please retake it with the label flat, clear, and well lit."
+    }
+
+
 class ConcurrentVisionService:
     def __init__(self, release_after: int = 3, fail_call: int | None = None) -> None:
         self.release_after = release_after
@@ -305,6 +335,17 @@ class ConcurrentVisionService:
             return _matching_extracted()
         finally:
             self.active -= 1
+
+
+class SequenceVisionService:
+    def __init__(self, extracted_values: list[ExtractedLabel]) -> None:
+        self.extracted_values = extracted_values
+        self.calls = 0
+
+    async def extract_label(self, image_bytes: bytes, content_type: str) -> ExtractedLabel:
+        value = self.extracted_values[self.calls]
+        self.calls += 1
+        return value
 
 
 def test_batch_processes_concurrently_with_bounded_limit_and_correct_summary(
@@ -358,7 +399,7 @@ def test_batch_isolates_item_error_and_counts_it_as_needs_review(
     assert error_items[0]["result"] is None
     assert error_items[0]["error"] == "We could not process this label. Please try this label again."
     assert "secret" not in response.text
-    assert sum(item["outcome"] == "PASS" for item in body["items"]) == 1
+    assert sum(item["outcome"] == "APPROVED" for item in body["items"]) == 1
     assert sum(item["outcome"] == "NEEDS_REVIEW" for item in body["items"]) == 1
 
 
@@ -378,9 +419,32 @@ def test_batch_returns_invalid_image_as_item_error_without_failing_sibling(
     assert response.status_code == 200
     body = response.json()
     assert body["summary"] == {"passed": 1, "needs_review": 1, "total": 2}
-    assert body["items"][0]["outcome"] == "PASS"
+    assert body["items"][0]["outcome"] == "APPROVED"
     assert body["items"][1]["outcome"] == "ERROR"
     assert body["items"][1]["error"] == "Uploaded file is not a valid image."
+
+
+def test_batch_isolates_unreadable_photo_error(client: TestClient) -> None:
+    service = SequenceVisionService([
+        _matching_extracted(),
+        ExtractedLabel(),
+    ])
+    _override_vision_service(service)
+
+    response = client.post(
+        "/verify/batch",
+        data={"applications": json.dumps([_form_data(), _form_data()])},
+        files=_batch_image_files(2),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["summary"] == {"passed": 1, "needs_review": 1, "total": 2}
+    assert body["items"][0]["outcome"] == "APPROVED"
+    assert body["items"][1]["outcome"] == "ERROR"
+    assert body["items"][1]["error"] == (
+        "We could not read this photo. Please retake it with the label flat, clear, and well lit."
+    )
 
 
 @pytest.mark.parametrize(
@@ -459,6 +523,13 @@ def _image_bytes() -> bytes:
     return output.getvalue()
 
 
+def _heif_bytes() -> bytes:
+    image = Image.new("RGB", (32, 32), color=(240, 240, 240))
+    output = io.BytesIO()
+    image.save(output, format="HEIF")
+    return output.getvalue()
+
+
 def _batch_image_files(count: int) -> list[tuple[str, tuple[str, bytes, str]]]:
     return [
         ("images", (f"label-{index + 1}.png", _image_bytes(), "image/png"))
@@ -467,10 +538,10 @@ def _batch_image_files(count: int) -> list[tuple[str, tuple[str, bytes, str]]]:
 
 
 def _field(body: dict[str, object], field_name: str) -> dict[str, object]:
-    fields = body["fields"]
-    assert isinstance(fields, list)
-    for field in fields:
+    results = body["results"]
+    assert isinstance(results, list)
+    for field in results:
         assert isinstance(field, dict)
-        if field["field_name"] == field_name:
+        if field["field"] == field_name:
             return field
     raise AssertionError(f"Missing field {field_name}")
